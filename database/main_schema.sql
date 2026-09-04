@@ -1,7 +1,3 @@
--- ============================================================
--- RAG Helpdesk — Combined Schema (Core Pipeline + Evaluation/Governance)
--- Replaces the two separate ERD1/ERD2 schemas — single source of truth
--- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
