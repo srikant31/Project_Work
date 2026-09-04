@@ -1,0 +1,65 @@
+erDiagram
+  USERS ||--o{ CONVERSATIONS : starts
+  USERS ||--o{ FEEDBACK : gives
+  CONVERSATIONS ||--o{ QUESTIONS : contains
+  QUESTIONS ||--|| RESPONSES : generates
+  RESPONSES ||--o{ RESPONSE_SOURCES : cites
+  DOCUMENT_CHUNKS ||--o{ RESPONSE_SOURCES : cited_in
+  RESPONSES ||--o| FEEDBACK : rated_by
+  QUESTIONS ||--o{ RETRIEVAL_LOGS : logs
+  RESPONSES ||--o| RETRIEVAL_LOGS : logs
+
+  USERS {
+    uuid id PK
+    string email
+    string role
+  }
+  CONVERSATIONS {
+    uuid id PK
+    uuid user_id FK
+    string title
+    timestamp created_at
+  }
+  QUESTIONS {
+    uuid id PK
+    uuid conversation_id FK
+    uuid user_id FK
+    text question_text
+    timestamp created_at
+  }
+  RESPONSES {
+    uuid id PK
+    uuid question_id FK
+    text answer_text
+    string model_name
+    int response_time_ms
+    boolean insufficient_context
+  }
+  RESPONSE_SOURCES {
+    uuid id PK
+    uuid response_id FK
+    uuid chunk_id FK
+    int rank
+    float similarity_score
+  }
+  DOCUMENT_CHUNKS {
+    uuid id PK
+    string chunk_level
+  }
+  FEEDBACK {
+    uuid id PK
+    uuid response_id FK
+    uuid user_id FK
+    string rating
+    text comment
+  }
+  RETRIEVAL_LOGS {
+    uuid id PK
+    uuid question_id FK
+    uuid response_id FK
+    int top_k_used
+    jsonb retrieved_chunk_ids
+    jsonb similarity_scores
+    int retrieval_time_ms
+    timestamp created_at
+  }

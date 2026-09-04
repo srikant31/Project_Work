@@ -1,0 +1,59 @@
+erDiagram
+  USERS ||--o{ DOCUMENTS : uploads
+  
+  DOCUMENTS ||--o{ DOCUMENT_CHUNK_Metadata : has
+  DOCUMENT_CHUNK_Metadata ||--o{ DOCUMENT_CHUNKS : split_into
+  DOCUMENT_CHUNKS ||--o{ DOCUMENT_CHUNKS : has_children
+ DOCUMENT_CHUNK_Metadata ||--o{ DOCUMENT_PROCESSING_JOBS : tracked_by
+
+  USERS {
+    uuid user_id PK
+    string email
+    string role
+  }
+  
+  DOCUMENTS {
+    uuid doc_id PK
+    uuid category
+    string filename
+    string filetype
+    string status
+    string version
+    uuid uploaded_by FK
+    timestamp uploaded_at
+  }
+  DOCUMENT_CHUNK_Metadata {
+    uuid id PK
+    uuid document_id FK
+    string version
+    string file_path
+    string file_type
+    int page_count
+    int chunk_count
+    timestamp indexed_at
+  }
+  DOCUMENT_CHUNKS {
+    uuid id PK
+    uuid document_version_id FK
+    uuid parent_chunk_id FK
+    string chunk_level
+    int chunk_index
+    text content_text
+    int token_count
+    int page_number
+    string section_heading
+    vector embedding
+    string embedding_model
+    jsonb metadata
+    timestamp created_at
+  }
+  DOCUMENT_PROCESSING_JOBS {
+    uuid id PK
+    uuid document_version_id FK
+    string status
+    int chunks_processed
+    text error_message
+    timestamp started_at
+    timestamp completed_at
+    int retry_count
+  }

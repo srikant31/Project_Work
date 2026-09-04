@@ -1,0 +1,96 @@
+erDiagram
+    Users ||--o{ Documents : "uploads"
+    Users ||--o{ Conversations : "initiates"
+    Users ||--o{ Feedback : "provides"
+    Documents ||--o{ DocumentChunks : "contains"
+    Documents ||--o{ IngestionJobs : "triggers"
+    Conversations ||--o{ Messages : "contains"
+    Messages ||--o{ Feedback : "receives"
+    Messages ||--o{ RetrievedContext : "uses"
+    DocumentChunks ||--o{ RetrievedContext : "cited_in"
+
+    Users {
+        uuid user_id PK
+        string email
+        string role
+        string department
+    }
+
+    Documents {
+        uuid doc_id PK
+        string doc_name
+        string doc_type
+        string doc_category
+        uuid uploaded_by FK
+        int version
+        string status
+        int page_count
+        string doc_path
+        int doc_size
+        timestamp created_at
+        timestamp updated_at
+        
+
+    }
+
+    DocumentChunks {
+        uuid chunk_id PK
+        uuid document_id FK
+        text chunk_text
+        int chunk_index
+        string section_heading
+        int page_number
+        string embedding_model
+        string embedding_vector_id
+        int token_count
+        timestamp chunk_created_at
+        boolean is_active
+    }
+
+    Conversations {
+        uuid id PK
+        uuid user_id FK
+        timestamp started_at
+        string title
+    }
+
+    Messages {
+        uuid message_id PK
+        uuid conversation_id FK
+        string message_provider "user | assistant"
+        %% message_provider here refer to ai or user
+        string model_name
+        text content
+        timestamp created_at
+        int response_time_ms
+        int top_k_used
+        boolean insufficient_context
+        %% model_name, response_time_ms, top_k_used, insufficient_context are filled only when message_provider='assistant'
+
+    }
+
+    RetrievedContext {
+        %% for now the retrived Context PK is (message_id, chunk_id)
+        uuid message_id FK
+        uuid chunk_id FK
+        float similarity_score
+        int rank
+    }
+
+    Feedback {
+        uuid message_id FK
+        uuid user_id FK
+        string rating
+        text comment
+    }
+
+    IngestionJobs {
+        uuid id PK
+        uuid document_id FK
+        string status
+        timestamp started_at
+        timestamp completed_at
+        text error_log
+        
+        int retry_count
+    }

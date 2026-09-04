@@ -1,0 +1,57 @@
+erDiagram
+  DOCUMENTS ||--o{ EVALUATION_QUESTIONS : expected_source
+  EVALUATION_QUESTIONS ||--o{ EVALUATION_RESULTS : produces
+  EVALUATION_TEST_RUNS ||--o{ EVALUATION_RESULTS : produces
+  USERS ||--o{ AUDIT_LOGS : performs
+
+  DOCUMENTS {
+    uuid doc_id PK
+    string doc_name
+  }
+  EVALUATION_QUESTIONS {
+    uuid id PK
+    text question_text
+    text expected_answer_text
+    uuid expected_document_id FK
+    int expected_source_page
+    string category
+    string difficulty
+    timestamp created_at
+  }
+  EVALUATION_TEST_RUNS {
+    uuid id PK
+    string run_name
+    jsonb chunking_config
+    int top_k_config
+    string embedding_model_config
+    jsonb llm_config
+    timestamp run_at
+  }
+  EVALUATION_RESULTS {
+    uuid id PK
+    uuid evaluation_question_id FK
+    uuid test_run_id FK
+    jsonb retrieved_chunks
+    text generated_answer
+    boolean answer_correct
+    boolean grounded
+    boolean hallucination_detected
+    boolean retrieval_hit
+    float retrieval_precision
+    float retrieval_recall
+    int response_time_ms
+    timestamp evaluated_at
+  }
+  USERS {
+    uuid user_id PK
+    string email
+    string role
+  }
+  AUDIT_LOGS {
+    uuid id PK
+    uuid user_id FK
+    string action
+    string entity_type
+    uuid entity_id
+    timestamp created_at
+  }
