@@ -1,0 +1,138 @@
+erDiagram
+    Users ||--o{ Documents : "uploads"
+    Users ||--o{ Conversations : "initiates"
+    Users ||--o{ Feedback : "provides"
+    Users ||--o{ AuditLogs : "performs"
+
+    Documents ||--o{ DocumentChunks : "contains"
+    Documents ||--o{ IngestionJobs : "triggers"
+    Documents ||--o{ EvaluationQuestions : "expected_source"
+    DocumentCategories ||--o{ Documents : "categorizes"
+
+    Conversations ||--o{ Messages : "contains"
+    Messages ||--o{ Feedback : "receives"
+    Messages ||--o{ RetrievedContext : "uses"
+    DocumentChunks ||--o{ RetrievedContext : "cited_in"
+
+    EvaluationQuestions ||--o{ EvaluationResults : "produces"
+    EvaluationTestRuns ||--o{ EvaluationResults : "produces"
+
+    Users {
+        uuid user_id PK
+        string email
+        string password_hash
+        string role
+        string department
+    }
+    DocumentCategories {
+        uuid category_id PK
+        string category_name
+        string description
+    }
+    Documents {
+        uuid doc_id PK
+        string doc_name
+        string doc_type
+        uuid category_id FK
+        uuid uploaded_by FK
+        int version
+        string status
+        int page_count
+        string doc_path
+        int doc_size
+        timestamp created_at
+        timestamp updated_at
+    }
+    DocumentChunks {
+        uuid chunk_id PK
+        uuid document_id FK
+        text chunk_text
+        int chunk_index
+        string section_heading
+        int page_number
+        string embedding_model
+        string embedding_vector_id
+        int token_count
+        timestamp chunk_created_at
+        boolean is_active
+    }
+    IngestionJobs {
+        uuid id PK
+        uuid document_id FK
+        string status
+        timestamp started_at
+        timestamp completed_at
+        text error_log
+        int retry_count
+    }
+    Conversations {
+        uuid id PK
+        uuid user_id FK
+        timestamp started_at
+        string title
+    }
+    Messages {
+        uuid message_id PK
+        uuid conversation_id FK
+        string message_provider "user_or_assistant"
+        string model_name
+        text content
+        timestamp created_at
+        int response_time_ms
+        int top_k_used
+        boolean insufficient_context
+    }
+    RetrievedContext {
+        uuid message_id PK
+        uuid chunk_id PK
+        float similarity_score
+        int rank
+    }
+    Feedback {
+        uuid message_id PK
+        uuid user_id PK
+        string rating
+        text comment
+    }
+    EvaluationQuestions {
+        uuid eval_question_id PK
+        text question_text
+        text expected_answer_text
+        uuid expected_doc_id FK
+        int expected_page_number
+        string category
+        string difficulty
+        timestamp created_at
+    }
+    EvaluationTestRuns {
+        uuid test_run_id PK
+        string run_name
+        jsonb chunking_config
+        int top_k_config
+        string embedding_model_config
+        jsonb llm_config
+        timestamp run_at
+    }
+    EvaluationResults {
+        uuid eval_result_id PK
+        uuid eval_question_id FK
+        uuid test_run_id FK
+        jsonb retrieved_chunks
+        text generated_answer
+        boolean retrieval_hit
+        boolean grounded
+        boolean hallucination_detected
+        boolean answer_correct
+        float retrieval_precision
+        float retrieval_recall
+        int response_time_ms
+        timestamp evaluated_at
+    }
+    AuditLogs {
+        uuid audit_log_id PK
+        uuid user_id FK
+        string action
+        string entity_type
+        uuid entity_id
+        timestamp created_at
+    }
