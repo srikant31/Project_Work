@@ -1,1 +1,9 @@
 erd2_evaluation_governance_setup_guide.md
+
+venv/
+__pycache__/
+*.pyc
+.env
+chroma_db/
+*.egg-info/
+.pytest_cache/
