@@ -1,4 +1,3 @@
-
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================
@@ -8,15 +7,22 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE Users (
     user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255),
     role VARCHAR(20) NOT NULL CHECK (role IN ('admin','employee')),
     department VARCHAR(100)
+);
+
+CREATE TABLE DocumentCategories (
+    category_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category_name VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT
 );
 
 CREATE TABLE Documents (
     doc_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     doc_name VARCHAR(255) NOT NULL,
-    doc_type VARCHAR(10) NOT NULL CHECK (doc_type IN ('pdf','docx','txt')),
-    doc_category VARCHAR(100),
+    doc_type VARCHAR(10) NOT NULL CHECK (doc_type IN ('pdf','docx','txt','md')),
+    category_id UUID REFERENCES DocumentCategories(category_id),
     uploaded_by UUID REFERENCES Users(user_id),
     version INT DEFAULT 1,
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active','deactivated')),
@@ -147,6 +153,7 @@ CREATE TABLE AuditLogs (
 -- ============================================================
 
 CREATE INDEX idx_documents_uploaded_by ON Documents(uploaded_by);
+CREATE INDEX idx_documents_category_id ON Documents(category_id);
 CREATE INDEX idx_documentchunks_document_id ON DocumentChunks(document_id);
 CREATE INDEX idx_documentchunks_active ON DocumentChunks(is_active) WHERE is_active = true;
 CREATE INDEX idx_ingestionjobs_document_id ON IngestionJobs(document_id);
