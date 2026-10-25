@@ -1,5 +1,9 @@
 # AI Helpdesk knowledge workspace
 
+See the [internship requirements and progress comparison](docs/reports/README.md)
+for a downloadable side-by-side review of all 49 specification sections, weekly
+milestones, implemented features and remaining acceptance gates.
+
 The implemented slice loads TXT, Markdown, text-layer PDF and DOCX documents,
 preserves source evidence, chunks with the embedding model's tokenizer, and
 publishes versioned evidence to PostgreSQL and Chroma. Search returns source

@@ -2538,3 +2538,57 @@ frontend/src/adminData.ts
   L1: import type { DateRange, DocumentFilters } from './types';
 
 END OF APPENDED ADMIN ANALYTICS, PROFILE, AUDIT, FILTERS AND CATEGORIES - 2026-10-23
+
+
+================================================================================
+APPENDED REQUIREMENTS PDF AND GIT DELIVERY - 2026-10-25
+================================================================================
+User requested a downloadable comparison of all internship requirements against
+current implementation, then explicitly requested git push of the project.
+
+Git delivery:
+- Fetched origin; main matched the previous HEAD before committing.
+- Committed 149 project files as bfed5eacce287fb7d93bb585032024cd858e7e26:
+  Implement helpdesk ingestion, RAG scaffolding and admin workspace.
+- Pushed origin/main successfully; git ls-remote confirmed the identical hash.
+- Existing source/history retained; no force push or history rewrite.
+- Added tmp/ ignore and .gitattributes to preserve PDF/DOCX/binary file bytes.
+- Staged-path and configured-secret checks passed without printing credentials.
+  .env, output/, tmp/, uploads, databases, node_modules and builds were excluded.
+- Existing recorded tests are 339 backend/34 frontend/build/14 isolated browser/
+  6 live checks from23 October; no new application code changes or repeat model
+  tests were needed for documentation packaging. No LLM calls were enabled.
+
+Final requirements report:
+- docs/reports/Internship_Requirements_Progress_Comparison_2026-10-25.pdf
+- Additional identical local copies under output/pdf/ and C:/Users/HP/Downloads/.
+- 28 pages, 28 navigation bookmarks, extractable text, 199 comparison rows covering
+  all49 sections of the22-page main internship PDF, the week-by-week plan, all17
+  mandatory lines, API/screen coverage, optional/excluded features, testing/AI
+  metrics, proposal deviations, final deliverables, assessment/checkpoints and
+  all17 Definition-of-Done gates. Full evidence index E01-E21 and completion order.
+- All28 pages rendered and visually inspected; no clipping/overlap/orphan pages.
+  Programmatic layout check found no words outside the page bounds.
+- Builder/checker/matrix/QA metadata preserved under ignored output/pdf/.
+- docs/reports/README.md and root README link the PDF. This report/doc update is
+  included in a follow-up documentation commit/push; obtain its hash from Git.
+
+Current milestone conclusion (supersedes historical overstatements):
+Weeks2-4 foundation is implemented. Week5 is the earliest open core milestone:
+actual LLM provider is disabled, despite built context/prompt/adapter/grounding
+and deterministic tests. Much of Weeks6-7 and Week9 admin work is built ahead.
+Employee owned conversation APIs exist, but the dedicated ordinary employee
+history browser/full persistent transcript screen is still missing. The current
+Assistant retains the current result and conversation ID; it is not that screen.
+Week8 remains a major open package: reviewed30-50 corpus-grounded gold questions,
+Precision@K/Recall@K, real-model correctness/relevance/groundedness/completeness/
+hallucination evaluation, prompt comparisons and a justified held-out setting.
+Fixture source-hit/full-evidence coverage/MRR are not precision/recall or answer
+quality, and thumbs votes are not independently reviewed gold labels. Context
+budget is UTF-8 bytes, not exact provider tokens. Quote provenance is not a proof
+of semantic relevance/completeness. Final AI/performance/release/fresh-setup proof,
+15-20-slide presentation, full demo and mentor approvals remain to be completed.
+
+No application data, user roles, secrets, provider setup or runtime state were
+changed to create the report. Only source/documentation/version-control work.
+END OF APPENDED REQUIREMENTS PDF AND GIT DELIVERY - 2026-10-25
