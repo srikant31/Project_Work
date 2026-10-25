@@ -1,0 +1,5 @@
+# Preserve document bytes; Git must not normalize PDF/DOCX line endings.
+*.pdf binary
+*.docx binary
+*.png binary
+*.zip binary

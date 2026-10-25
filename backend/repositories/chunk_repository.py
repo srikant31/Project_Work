@@ -1,4 +1,4 @@
-from backend.database.models import DocumentChunk
+from backend.database.models import Document, DocumentChunk
 
 
 class ChunkRepository:
@@ -17,6 +17,9 @@ class ChunkRepository:
         embedding_vector_id: str | None = None,
         page_number: int | None = None,
         section_heading: str | None = None,
+        start_char: int | None = None,
+        end_char: int | None = None,
+        is_active: bool = False,
     ) -> DocumentChunk:
         chunk = DocumentChunk(
             document_id=document_id,
@@ -27,6 +30,9 @@ class ChunkRepository:
             embedding_vector_id=embedding_vector_id,
             page_number=page_number,
             section_heading=section_heading,
+            start_char=start_char,
+            end_char=end_char,
+            is_active=is_active,
         )
         self.session.add(chunk)
         # flush() sends the INSERT so the server-side UUID default fires and
@@ -34,26 +40,40 @@ class ChunkRepository:
         self.session.flush()
         return chunk
 
-    def get_chunks_by_document(self, document_id) -> list[DocumentChunk]:
-        return (
-            self.session.query(DocumentChunk)
-            .filter(
-                DocumentChunk.document_id == document_id,
-                DocumentChunk.is_active.is_(True),
+    def get_chunks_by_document(self, document_id, active_only: bool = True) -> list[DocumentChunk]:
+        query = self.session.query(DocumentChunk).filter(DocumentChunk.document_id == document_id)
+        if active_only:
+            query = query.join(Document).filter(
+                DocumentChunk.is_active.is_(True), Document.status == "active", Document.is_online.is_(True)
             )
-            .order_by(DocumentChunk.chunk_index)
-            .all()
-        )
+        return query.order_by(DocumentChunk.chunk_index).all()
 
-    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[DocumentChunk]:
+    def get_chunks_by_ids(self, chunk_ids: list[str], active_only: bool = True) -> list[DocumentChunk]:
         """Used by the retrieval path: Chroma returns IDs, Postgres returns the
         authoritative row (page number, heading, parent document)."""
         if not chunk_ids:
             return []
+        query = self.session.query(DocumentChunk).filter(DocumentChunk.chunk_id.in_(chunk_ids))
+        if active_only:
+            query = query.join(Document).filter(
+                DocumentChunk.is_active.is_(True), Document.status == "active", Document.is_online.is_(True)
+            )
+        return query.all()
+
+    def get_all_chunk_ids(self, document_id) -> list[str]:
+        return [
+            str(row[0])
+            for row in self.session.query(DocumentChunk.chunk_id)
+            .filter(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.chunk_index)
+            .all()
+        ]
+
+    def activate_chunks_for_document(self, document_id) -> int:
         return (
             self.session.query(DocumentChunk)
-            .filter(DocumentChunk.chunk_id.in_(chunk_ids))
-            .all()
+            .filter(DocumentChunk.document_id == document_id)
+            .update({DocumentChunk.is_active: True}, synchronize_session="fetch")
         )
 
     def deactivate_chunks_for_document(self, document_id) -> int:
@@ -65,5 +85,5 @@ class ChunkRepository:
                 DocumentChunk.document_id == document_id,
                 DocumentChunk.is_active.is_(True),
             )
-            .update({DocumentChunk.is_active: False}, synchronize_session=False)
+            .update({DocumentChunk.is_active: False}, synchronize_session="fetch")
         )

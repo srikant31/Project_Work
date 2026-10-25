@@ -2,9 +2,8 @@ from backend.database.models import DocumentCategory
 
 
 class CategoryRepository:
-    """Read-only lookups. Categories are seeded via the migration, not
-    created ad-hoc by application code — that keeps the taxonomy a
-    deliberate, reviewed list rather than whatever string a caller typed."""
+    """Read-only ingestion lookups. Taxonomy maintenance is handled separately
+    by CategoryService with admin authorization, validation and audit records."""
 
     def __init__(self, session):
         self.session = session

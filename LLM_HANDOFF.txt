@@ -1,0 +1,2540 @@
+AI HELPDESK INGESTION AND CHUNKING HANDOFF
+========================================
+
+WORKSPACE AND USER GOAL
+Workspace: C:\Users\HP\Desktop\Sopra_work
+Repository remote: https://github.com/srikant31/Project_Work.git
+Base commit before this implementation: a1e7c8cd171ec1a6e7a35d82cc2b4e33d7db4c3b
+
+The project is an internal helpdesk using retrieval augmented generation.
+The user asked to finish reliable document extraction, token-aware chunking,
+and safe ingestion/replacement before starting the golden evaluation dataset.
+They also asked for a detailed explanation of files, imports and dependencies.
+The proposal's relevant milestones are weeks 2-4; the full LLM/chat application,
+FastAPI endpoints, authentication, React frontend and formal evaluation report
+are still future deliverables. No start date was provided, so a calendar week
+cannot be established from code progress.
+
+COMPLETED IMPLEMENTATION
+1. Structured extraction for TXT, Markdown, text-layer PDF and DOCX.
+   Original file SHA-256 and actual byte size are captured. Normalized source
+   text is represented as ordered blocks with honest location metadata.
+   TXT supports UTF-8/BOM, BOM-marked UTF-16/32 and warned Windows-1252 fallback.
+   DOCX paragraphs/tables retain document order, standard headings and nested
+   table content; merged-cell text is not duplicated.
+   PDF preserves physical page numbering and blank-page gaps. Valid short PDFs
+   no longer fail a 50-character heuristic. Empty, corrupt, encrypted,
+   image-only and mixed scanned/text documents have classified errors.
+
+2. Model-aware chunking uses the real fast tokenizer and the sentence model's
+   effective maximum, not word counts or the tokenizer's advertised maximum.
+   Cached all-MiniLM-L6-v2 revision:
+   1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+   Embedding dimension: 384. Effective input maximum: 256 tokens.
+   Default content chunk size: 200 tokens. Requested overlap: up to 40 tokens.
+   Final encodings including special tokens are checked before embedding.
+   Chunks prefer sentence/paragraph boundaries, retain source substrings and
+   never cross a physical PDF page or detected section boundary.
+   Retokenization cannot emit contained duplicate chunks or silently truncate.
+
+3. Recoverable staged ingestion publishes immutable versions.
+   Preflight extraction/chunking/embedding precedes persistence.
+   A staging document, inactive expected chunks and processing job are committed.
+   A category/source advisory lock protects vector writing and publication.
+   Verified Chroma vectors are published through one PostgreSQL transaction
+   activating the new rows, deactivating the predecessor and completing the job.
+   Predecessor vector cleanup happens afterward and cannot undo publication.
+   PostgreSQL is authoritative for retrieval eligibility; staged, missing,
+   inactive or unknown chunks are not returned as valid evidence.
+
+4. Source identity and repeat-import behavior are explicit.
+   Identity is category_id plus source_key, separate from the display title.
+   Folder ingestion supplies relative POSIX paths including file extension.
+   Direct process_file defaults to a normalized absolute path; portable corpus
+   callers should pass an explicit stable source_key.
+   Same original bytes + extracted text + full configuration is skipped only
+   after verifying existing vectors. Changed content/format/parser/chunker/
+   model/collection settings create a new version. Failed attempts can consume
+   version numbers. Same basename under different source keys stays separate.
+
+5. Recovery handles partial writes, cleanup failures and uncertain commits.
+   A lost commit acknowledgement is checked using a fresh database connection.
+   An unknown outcome is preserved for recovery; vectors possibly belonging to
+   a committed publication are never deleted merely because commit() raised.
+   Reconciliation is report-only by default and apply requires a document UUID.
+   It can retire stale staged attempts, remove failed/obsolete vectors or rebuild
+   missing active vectors from stored chunks with the original model settings.
+   Recovery uses an existing vector path/collection and never resets a store.
+   PostgreSQL and Chroma do not share a distributed transaction; physical store
+   equality during every crash is not promised. Visibility and recovery are
+   the implemented guarantees. Unknown ghost-vector ownership is reported for
+   scoped investigation rather than blindly deleting other documents' data.
+
+PROVENANCE CONTRACT
+LoadedDocument: doc_type, title, blocks, source_hash, source_size,
+extractor_version, warnings, source_text, page_count.
+SourceBlock: text, index, page_number, section_heading, start_char, end_char.
+Chunk: text, index, page_number, section_heading, start_char, end_char, token_count.
+Offsets are half-open CHARACTER offsets in normalized extracted_text.
+They are not offsets into PDF/DOCX binary files.
+token_count excludes special tokens; actual full model input is separately checked.
+PDF alone has physical page references. DOCX/TXT/MD page_number is NULL.
+Raw from_pages hashes a canonical UTF-8 JSON page sequence; file-based PDF loads
+always override that with the original binary file checksum and byte size.
+
+DATABASE AND LIVE DATA CHANGES
+A full custom-format pg_dump backup was created before applying migrations:
+output/backups/before_ingestion_003_20261021_234258.dump
+Backup size at validation: 35149 bytes. Keep this private; output/ is ignored.
+Migrations 002 and 003 were applied successfully to the configured live database.
+Migration 003 adds staging/failed document states, source identity/checksums,
+pipeline config, immutable extracted snapshot, extraction warnings,
+cleanup_pending and chunk offsets. It enforces unique active source, unique
+source version and unique per-document chunk index. It preserves NULL legacy
+provenance and aborts on duplicate conflicts instead of deleting rows.
+Connections now use correctly escaped SQLAlchemy URL objects and UTC sessions.
+Historical naive timestamps have not been rewritten or assigned guessed zones.
+
+One confirmed historical inconsistency was corrected:
+document UUID 9580129e-78e9-4a0d-b73e-fdb343c5c37b
+Before: active; zero chunks; its only job was failed.
+After: failed. Document row, job and error log were preserved; no vectors/rows
+were deleted. The guarded repair record is output/validation/legacy_status_repair.json.
+
+Live store after changes: 6 legacy document records, 5 active and 1 failed,
+13 eligible chunks; no managed versions were populated in the live corpus by
+the test suite. Final live audit has NO FAIL checks and one WARN identifying
+all 6 records as legacy with unknown historical provenance. Do not grade these
+records as if the new source/token contract had been captured for them.
+Use deliberate managed reingestion to prepare the final golden corpus.
+Live semantic-search smoke test returned hits; report-only reconciliation
+returned an empty action list. Original corpus files were not changed.
+
+VALIDATION EVIDENCE
+Final command:
+  .\venv\Scripts\python.exe -m pytest --run-integration -q --tb=short
+Observed result: 89 passed in 40.28 seconds.
+Integration uses REAL PostgreSQL in uniquely named throwaway schemas, temporary
+Chroma directories and the cached real MiniLM embedding model. It does not use
+public document tables/default chroma_db for ingestion tests. Final check found
+0 remaining codex_ingest_test_* or codex_ingest_migration_* schemas.
+
+Tests cover all four sample formats through extraction -> chunks -> embeddings
+-> PostgreSQL/Chroma -> retrieval -> source audit, plus corruption, empty files,
+encrypted/scanned/mixed PDFs, DOCX ordering/headings/tables, Unicode/encodings,
+token limits/full special-token budgets/overlap/provenance, duplicate detection,
+format/config changes, partial vector failure, job completion failure,
+publication failure, lost commit acknowledgement, unknown commit outcome,
+cleanup failure, staging invisibility, retirement/publication race, concurrent
+imports, active-index repair, migration repetition/constraints/preflight rollback,
+store-free dry-run imports and scoped recovery CLI behavior.
+
+Latest sample preview: 4 supported documents -> 15 chunks, maximum payload 194.
+PDF 3 chunks; DOCX 2; TXT 5; Markdown 5. All exact source-span checks pass.
+The existing sample_scanned_like.pdf is actually blank, not an embedded image:
+it correctly raises EmptyDocumentError. Generated real image-only and mixed
+PDF fixtures separately prove ScannedPdfError handling. XYZ is unsupported.
+Thus previewing the whole sample fixture folder exits 1 for its intentional
+negative inputs; that is expected, not a failure of the supported formats.
+
+Evidence files (ignored output directory):
+  output/validation/pytest_integration.txt
+  output/validation/preview_documents_report.json
+  output/validation/live_store_audit.json
+  output/validation/live_search_smoke.json
+  output/validation/reconciliation_report.json
+  output/validation/legacy_status_repair.json
+
+COMMANDS FOR THE NEXT SESSION
+Always run from C:\Users\HP\Desktop\Sopra_work and use the project venv.
+  .\venv\Scripts\python.exe -m scripts.preview_documents --folder data/documents --output output/preview.json
+  .\venv\Scripts\python.exe -m scripts.ingest_folder --folder data/documents --dry-run
+  .\venv\Scripts\python.exe -m scripts.ingest_folder --folder YOUR_APPROVED_CORPUS --category-name "IT Support" --recursive --output output/ingestion.json
+  .\venv\Scripts\python.exe -m scripts.search_demo "How do I connect to VPN?" --top-k 3
+  .\venv\Scripts\python.exe -m scripts.verify_stores
+  .\venv\Scripts\python.exe -m scripts.reconcile_stores
+  .\venv\Scripts\python.exe -m scripts.reconcile_stores --doc-id DOCUMENT_UUID --apply
+  .\venv\Scripts\python.exe -m pytest --run-integration -q
+
+Migrations for another existing installation:
+  .\venv\Scripts\python.exe -m scripts.apply_ingestion_migrations
+This requires pg_dump and takes a backup before additive schema changes.
+Do not rerun the full CREATE TABLE schema against an existing database.
+
+CURRENT LIMITATIONS AND NEXT WORK
+OCR and complex PDF visual/table/image reconstruction remain out of scope.
+Text adjacent to images can omit image information; extraction warns about this.
+DOCX rendered pages, headers, footers, text boxes and tracked revisions are not
+extracted and are explicitly warned. File-size/upload authorization belongs in
+the future HTTP upload layer. The current pipeline is a service/CLI interface.
+Historical source hashes/offsets and naive timestamp zones cannot be invented.
+Cross-model active-vector repair requires the original configuration/collection;
+otherwise create a new indexed version. Corpus-scale access filtering and
+large active-document-ID filters need evaluation before production deployment.
+
+Next: select/freeze approved source documents, ingest managed versions and
+review the evidence. Write 10 manually checked questions, then expand to 30-50.
+Gold fields: question ID, question, answerability, expected answer, source
+identity/version/file checksum, real PDF page or section, exact evidence text
+and normalized evidence offsets, category and difficulty. Keep gold anchors
+independent of chunk IDs; map chunks per pipeline configuration. Unsupported
+questions are mandatory. Run retrieval baseline first; answer groundedness,
+correctness and hallucination tests require the still-unbuilt LLM pipeline.
+
+REPOSITORY STATUS AND SECRETS
+No commit, push or remote publication was performed. GitHub therefore does not
+yet contain this implementation. Existing uncommitted loader/scripts/sample
+files were preserved and built upon. .env was used only for local connection
+configuration; its contents were not printed, changed or copied here.
+requirements.txt, requirements_utf8.txt, pytest.ini, the historical schema log
+and evaluation setup guide were not changed. Their existence is not proof of
+implemented application features. .gitignore now excludes output/ artifacts.
+No new package installation, model download, LLM call or global store reset
+was needed. The old repository-layer embedder is now a compatibility re-export
+of the authoritative service-layer implementation.
+
+FILE OWNERSHIP AND IMPORT REFERENCE
+The following generated section lists every import in the changed/new Python
+implementation and test files. A local dependency points to its source file;
+third-party dependencies name their distribution; standard-library imports
+belong to Python. Imports inside functions are intentionally lazy where noted
+in the file purpose, so preview/recovery need not load models or contact stores.
+
+IMPORT MAP GENERATED FROM PYTHON AST
+====================================
+
+C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+Purpose: Escaped environment-based DB URL, UTC engines and isolated schema/session helpers.
+  L1: import os
+    Belongs to: Python standard library (os)
+  L2: from contextlib import contextmanager
+    Belongs to: Python standard library (contextlib)
+  L4: from dotenv import load_dotenv
+    Belongs to: third-party distribution: python-dotenv
+  L5: from sqlalchemy import URL, create_engine
+    Belongs to: third-party distribution: SQLAlchemy
+  L6: from sqlalchemy.orm import sessionmaker
+    Belongs to: third-party distribution: SQLAlchemy
+  L41: import re
+    Belongs to: Python standard library (re)
+
+C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+Purpose: SQLAlchemy mappings, source snapshots, provenance columns and uniqueness/status constraints.
+  L1: import uuid
+    Belongs to: Python standard library (uuid)
+  L2: from datetime import datetime
+    Belongs to: Python standard library (datetime)
+  L4: from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, func, text
+    Belongs to: third-party distribution: SQLAlchemy
+  L17: from sqlalchemy.dialects.postgresql import JSONB, UUID
+    Belongs to: third-party distribution: SQLAlchemy
+  L18: from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+    Belongs to: third-party distribution: SQLAlchemy
+
+C:\Users\HP\Desktop\Sopra_work\backend\repositories\chunk_repository.py
+Purpose: Chunk persistence, active-row joins, exact source spans and visibility updates.
+  L1: from backend.database.models import Document, DocumentChunk
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+
+C:\Users\HP\Desktop\Sopra_work\backend\repositories\document_repository.py
+Purpose: Document persistence, stable source identity, advisory locks and lifecycle operations.
+  L1: import hashlib
+    Belongs to: Python standard library (hashlib)
+  L3: from sqlalchemy import func, text
+    Belongs to: third-party distribution: SQLAlchemy
+  L5: from backend.database.models import Document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+
+C:\Users\HP\Desktop\Sopra_work\backend\repositories\embedding_service.py
+Purpose: Compatibility alias to the authoritative service embedder; duplicate implementation removed.
+  L3: from backend.services.embedding_service import EmbeddingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\embedding_service.py
+
+C:\Users\HP\Desktop\Sopra_work\backend\repositories\ingestion_job_repository.py
+Purpose: Processing/completed/failed job lifecycle and guarded failure recording.
+  L1: from datetime import datetime, timezone
+    Belongs to: Python standard library (datetime)
+  L3: from backend.database.connection import SessionLocal
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+  L4: from backend.database.models import IngestionJob
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+
+C:\Users\HP\Desktop\Sopra_work\backend\services\document_processing_service.py
+Purpose: Coordinates validation, version reservation, staging/publication, cleanup, search and reconciliation.
+  L7: import hashlib
+    Belongs to: Python standard library (hashlib)
+  L8: import json
+    Belongs to: Python standard library (json)
+  L9: import math
+    Belongs to: Python standard library (math)
+  L10: import os
+    Belongs to: Python standard library (os)
+  L11: import uuid
+    Belongs to: Python standard library (uuid)
+  L12: from datetime import UTC, datetime, timedelta
+    Belongs to: Python standard library (datetime)
+  L13: from importlib.metadata import version as package_version
+    Belongs to: Python standard library (importlib.metadata)
+  L14: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L16: from sqlalchemy import or_
+    Belongs to: third-party distribution: SQLAlchemy
+  L17: from sqlalchemy.orm import sessionmaker
+    Belongs to: third-party distribution: SQLAlchemy
+  L19: from backend.database.connection import SessionLocal
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+  L20: from backend.database.models import Document, DocumentCategory, DocumentChunk, IngestionJob
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+  L21: from backend.repositories.category_repository import CategoryRepository
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\repositories\category_repository.py
+  L22: from backend.repositories.chunk_repository import ChunkRepository
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\repositories\chunk_repository.py
+  L23: from backend.repositories.document_repository import DocumentRepository
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\repositories\document_repository.py
+  L24: from backend.repositories.ingestion_job_repository import IngestionJobRepository
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\repositories\ingestion_job_repository.py
+  L25: from backend.utils.loaders import LoadedDocument, load_document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+  L26: from backend.utils.chunking import CHUNKER_VERSION, chunk_document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\chunking.py
+  L54: from backend.services.embedding_service import EmbeddingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\embedding_service.py
+  L61: from backend.services.retrieval_service import RetrievalService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\retrieval_service.py
+
+C:\Users\HP\Desktop\Sopra_work\backend\services\embedding_service.py
+Purpose: Authoritative local SentenceTransformer model, tokenizer, effective limit and batched vectors.
+  L3: from importlib.metadata import version
+    Belongs to: Python standard library (importlib.metadata)
+  L5: from sentence_transformers import SentenceTransformer
+    Belongs to: third-party distribution: sentence-transformers
+
+C:\Users\HP\Desktop\Sopra_work\backend\services\retrieval_service.py
+Purpose: Chroma persistence, idempotent upserts, vector verification and eligible-document queries.
+  L3: import chromadb
+    Belongs to: third-party distribution: chromadb
+  L4: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+
+C:\Users\HP\Desktop\Sopra_work\backend\utils\chunking.py
+Purpose: Tokenizer-bounded source spans, overlap, boundary preference and final input validation.
+  L2: from dataclasses import dataclass
+    Belongs to: Python standard library (dataclasses)
+  L4: from backend.utils.loaders import LoadedDocument, SourceBlock
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+
+C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+Purpose: Extraction, source blocks, honest page/section references, checksums and typed errors.
+  L7: import hashlib
+    Belongs to: Python standard library (hashlib)
+  L8: import io
+    Belongs to: Python standard library (io)
+  L9: import json
+    Belongs to: Python standard library (json)
+  L10: import re
+    Belongs to: Python standard library (re)
+  L11: import codecs
+    Belongs to: Python standard library (codecs)
+  L12: from dataclasses import dataclass, field
+    Belongs to: Python standard library (dataclasses)
+  L13: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L145: from markdown_it import MarkdownIt
+    Belongs to: third-party distribution: markdown-it-py
+  L227: from pypdf import PdfReader
+    Belongs to: third-party distribution: pypdf
+  L256: from docx import Document
+    Belongs to: third-party distribution: python-docx
+  L257: from docx.table import Table
+    Belongs to: third-party distribution: python-docx
+  L258: from docx.text.paragraph import Paragraph
+    Belongs to: third-party distribution: python-docx
+  L311: from docx.table import Table
+    Belongs to: third-party distribution: python-docx
+
+C:\Users\HP\Desktop\Sopra_work\scripts\apply_ingestion_migrations.py
+Purpose: Creates private pg_dump backup and applies additive migrations 002/003.
+  L7: import argparse
+    Belongs to: Python standard library (argparse)
+  L8: import os
+    Belongs to: Python standard library (os)
+  L9: import shutil
+    Belongs to: Python standard library (shutil)
+  L10: import subprocess
+    Belongs to: Python standard library (subprocess)
+  L11: from datetime import datetime
+    Belongs to: Python standard library (datetime)
+  L12: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L14: from backend.database.connection import build_database_url, make_engine
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+
+C:\Users\HP\Desktop\Sopra_work\scripts\ingest_demo.py
+Purpose: Convenient sample entry point; defaults to preview, --write explicitly ingests.
+  L10: import argparse
+    Belongs to: Python standard library (argparse)
+  L11: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L13: from scripts.ingest_folder import main as ingest_main
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\ingest_folder.py
+
+C:\Users\HP\Desktop\Sopra_work\scripts\ingest_folder.py
+Purpose: Folder CLI, portable relative source keys, repeat imports and store-free dry-run delegation.
+  L10: import argparse
+    Belongs to: Python standard library (argparse)
+  L11: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L13: from scripts.preview_documents import collect_paths, create_embedder, error_kind, preview_paths, write_report
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\preview_documents.py
+  L43: from backend.services.document_processing_service import DocumentProcessingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\document_processing_service.py
+
+C:\Users\HP\Desktop\Sopra_work\scripts\preview_documents.py
+Purpose: Store-free extraction/chunk preview and JSON evidence report.
+  L9: import argparse
+    Belongs to: Python standard library (argparse)
+  L10: import json
+    Belongs to: Python standard library (json)
+  L11: from dataclasses import asdict
+    Belongs to: Python standard library (dataclasses)
+  L12: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L26: from backend.services.embedding_service import EmbeddingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\embedding_service.py
+  L32: from backend.utils.loaders import ScannedPdfError, UnsupportedFormatError
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+  L42: from backend.utils.chunking import chunk_document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\chunking.py
+  L43: from backend.utils.loaders import load_document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+
+C:\Users\HP\Desktop\Sopra_work\scripts\reconcile_stores.py
+Purpose: Existing-store, explicit-document recovery CLI; report-only by default.
+  L9: import argparse
+    Belongs to: Python standard library (argparse)
+  L10: import json
+    Belongs to: Python standard library (json)
+  L11: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L12: from uuid import UUID
+    Belongs to: Python standard library (uuid)
+  L30: from backend.services.document_processing_service import DocumentProcessingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\document_processing_service.py
+  L31: from backend.services.retrieval_service import RetrievalService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\retrieval_service.py
+  L46: from scripts.preview_documents import create_embedder
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\preview_documents.py
+
+C:\Users\HP\Desktop\Sopra_work\scripts\search_demo.py
+Purpose: Search CLI showing authoritative source/version/offset metadata.
+  L3: import argparse
+    Belongs to: Python standard library (argparse)
+  L4: import json
+    Belongs to: Python standard library (json)
+  L18: from backend.services.document_processing_service import DocumentProcessingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\document_processing_service.py
+
+C:\Users\HP\Desktop\Sopra_work\scripts\verify_stores.py
+Purpose: Read-only relational/vector/provenance/token consistency audit.
+  L11: import argparse
+    Belongs to: Python standard library (argparse)
+  L12: import hashlib
+    Belongs to: Python standard library (hashlib)
+  L13: import json
+    Belongs to: Python standard library (json)
+  L14: from datetime import timedelta
+    Belongs to: Python standard library (datetime)
+  L15: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L16: from uuid import UUID
+    Belongs to: Python standard library (uuid)
+  L21: from sqlalchemy import func, select
+    Belongs to: third-party distribution: SQLAlchemy
+  L22: from backend.database.models import Document, DocumentChunk, IngestionJob
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+  L97: from scripts.preview_documents import create_embedder
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\preview_documents.py
+  L164: import chromadb
+    Belongs to: third-party distribution: chromadb
+  L165: from sqlalchemy import text
+    Belongs to: third-party distribution: SQLAlchemy
+  L166: from backend.database.connection import SessionLocal
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\conftest.py
+Purpose: Integration opt-in, throwaway PostgreSQL schemas, temporary Chroma and shared real model fixtures.
+  L3: import uuid
+    Belongs to: Python standard library (uuid)
+  L5: import pytest
+    Belongs to: third-party distribution: pytest
+  L26: from backend.database.connection import build_database_url
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+  L32: from sqlalchemy import text
+    Belongs to: third-party distribution: SQLAlchemy
+  L33: from sqlalchemy.orm import sessionmaker
+    Belongs to: third-party distribution: SQLAlchemy
+  L34: from backend.database.connection import make_engine
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+  L35: from backend.database.models import Base, DocumentCategory
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+  L62: from backend.services.embedding_service import EmbeddingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\embedding_service.py
+  L68: from backend.services.retrieval_service import RetrievalService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\retrieval_service.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_chunking.py
+Purpose: Real tokenizer limits, offsets, Unicode, source coverage and overlap regressions.
+  L2: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L4: import pytest
+    Belongs to: third-party distribution: pytest
+  L5: from tokenizers import Tokenizer, models, normalizers, pre_tokenizers, processors
+    Belongs to: third-party distribution: tokenizers
+  L6: from transformers import PreTrainedTokenizerFast
+    Belongs to: third-party distribution: transformers
+  L8: from backend.utils.chunking import chunk_document, chunk_pages, chunk_text
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\chunking.py
+  L9: from backend.utils.loaders import LoadedDocument, SourceBlock, load_document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+  L149: from transformers import AutoTokenizer
+    Belongs to: third-party distribution: transformers
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_cli_tools.py
+Purpose: DB-free preview imports, source identity, explicit recovery scope/options and audit corruption detection.
+  L3: import subprocess
+    Belongs to: Python standard library (subprocess)
+  L4: import sys
+    Belongs to: Python standard library (sys)
+  L5: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L6: from types import SimpleNamespace
+    Belongs to: Python standard library (types)
+  L8: import pytest
+    Belongs to: third-party distribution: pytest
+  L33: from scripts import ingest_folder
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\ingest_folder.py
+  L64: from scripts.reconcile_stores import main
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\reconcile_stores.py
+  L73: from scripts.reconcile_stores import main
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\reconcile_stores.py
+  L95: from scripts import preview_documents
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\preview_documents.py
+  L96: from scripts.reconcile_stores import main
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\reconcile_stores.py
+  L131: from scripts.reconcile_stores import main
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\reconcile_stores.py
+  L150: from scripts import preview_documents
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\preview_documents.py
+  L151: from scripts.reconcile_stores import main
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\reconcile_stores.py
+  L186: from backend.database.models import DocumentChunk
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+  L187: from backend.services.document_processing_service import DocumentProcessingService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\document_processing_service.py
+  L188: from scripts.verify_stores import audit_stores
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\verify_stores.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_document_processing.py
+Purpose: Real-store lifecycle, failure, recovery, concurrency and all-format round-trip integration.
+  L1: import uuid
+    Belongs to: Python standard library (uuid)
+  L2: from concurrent.futures import ThreadPoolExecutor
+    Belongs to: Python standard library (concurrent.futures)
+  L4: import pytest
+    Belongs to: third-party distribution: pytest
+  L6: from backend.database.models import Document, DocumentChunk, IngestionJob
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\models.py
+  L7: from backend.services.document_processing_service import ConcurrentIngestionError, DocumentProcessingService, RecoveryPendingError
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\document_processing_service.py
+  L191: from scripts.verify_stores import audit_stores
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\verify_stores.py
+  L264: from scripts.verify_stores import audit_stores
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\scripts\verify_stores.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_embedding_service.py
+Purpose: Real model vector shape, batching and rejection of oversized/empty input.
+  L1: import pytest
+    Belongs to: third-party distribution: pytest
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_loaders.py
+Purpose: Format/encoding/order/page/scanned/corrupt/hash extraction regressions.
+  L2: import hashlib
+    Belongs to: Python standard library (hashlib)
+  L3: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L5: import pytest
+    Belongs to: third-party distribution: pytest
+  L6: from docx import Document
+    Belongs to: third-party distribution: python-docx
+  L7: from pypdf import PdfWriter
+    Belongs to: third-party distribution: pypdf
+  L8: from pypdf.generic import DictionaryObject, NameObject, NumberObject, DecodedStreamObject
+    Belongs to: third-party distribution: pypdf
+  L10: from backend.utils.loaders import DocumentLoadError, EmptyDocumentError, EncryptedPdfError, LoadedDocument, ScannedPdfError, UnsupportedFormatError, clean_text, load_document
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\loaders.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_migrations.py
+Purpose: Legacy-data preservation, repeatability, constraints and conflict rollback in isolated schemas.
+  L6: from pathlib import Path
+    Belongs to: Python standard library (pathlib)
+  L7: import uuid
+    Belongs to: Python standard library (uuid)
+  L9: import pytest
+    Belongs to: third-party distribution: pytest
+  L10: from sqlalchemy import text
+    Belongs to: third-party distribution: SQLAlchemy
+  L11: from sqlalchemy.exc import DBAPIError, IntegrityError
+    Belongs to: third-party distribution: SQLAlchemy
+  L13: from backend.database.connection import make_engine
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\database\connection.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_pipeline_invariants.py
+Purpose: Fast deterministic coverage/index/page/overlap contract regressions.
+  L2: import re
+    Belongs to: Python standard library (re)
+  L4: import pytest
+    Belongs to: third-party distribution: pytest
+  L6: from backend.utils.chunking import chunk_pages, chunk_text
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\utils\chunking.py
+
+C:\Users\HP\Desktop\Sopra_work\tests\test_retrieval_service.py
+Purpose: Actual Chroma upsert/filter/verification/delete and existing-only adapter behavior.
+  L1: import pytest
+    Belongs to: third-party distribution: pytest
+  L31: from backend.services.retrieval_service import RetrievalService
+    Belongs to: C:\Users\HP\Desktop\Sopra_work\backend\services\retrieval_service.py
+
+REALISTIC DOCUMENT VALIDATION ADDENDUM
+=====================================
+User additionally requested generated realistic documents and an actual pipeline test.
+Created fictional Cedarbridge policies: PDF with 5 physical pages including blank
+page 3; DOCX with 3 rendered pages and an interleaved SLA table; Markdown leave
+rules; and a UTF-16 equipment handbook.
+Generated image-only, mixed scanned/text and encrypted negative PDFs as well.
+Labels were authored/frozen before retrieval and independently checked.
+
+Strict real-store validation: PASS. Four sources, 30 chunks, largest full input
+202 tokens including special tokens, within 256. All 17 store audit checks PASS;
+all source coverage and PDF/DOCX order/location checks PASS; 3 expected rejections
+with zero writes; 4 repeat
+imports skipped with counts unchanged. Temporary schema/index removed.
+12 answerable queries: correct document @1=12/12, @3=12/12; complete evidence
+@1=9/12, @3=12/12. Three top-1 evidence misses Q01 hotel tax qualification,
+Q02 expense deadlines and Q06 P2 VPN SLA were recovered at rank 2.
+No labels were changed to improve metrics.
+3 unsupported queries were diagnostics, not included in these rates; similarity
+search still returns passages. No LLM answer generation/refusal was tested.
+
+New reusable source: scripts/validate_real_documents.py. It accepts alternate
+corpus/manifest/query/output paths and uses a unique codex_real_docs_ schema,
+real model and temporary Chroma. --strict returns 1 on a failed semantic check.
+
+Artifacts: output/real_document_validation/{documents,manifest.json,
+evaluation_queries.json,results.json,VALIDATION_REPORT.md,independent_review.txt,
+generate_corpus.py}. A shareable copy is output/real_document_validation_bundle.zip.
+PDF/DOCX were rendered and visually inspected; DOCX rendered through installed
+Microsoft Word because LibreOffice was absent. Generated artifacts are fictional
+validation material, not authentic company policy. Approved actual sources are
+still needed for the final 30-50 question golden evaluation corpus.
+
+ADDITIONAL RUNNER IMPORTS
+  scripts\validate_real_documents.py:L11: import argparse
+  scripts\validate_real_documents.py:L12: import json
+  scripts\validate_real_documents.py:L13: import re
+  scripts\validate_real_documents.py:L14: import tempfile
+  scripts\validate_real_documents.py:L15: import time
+  scripts\validate_real_documents.py:L16: import uuid
+  scripts\validate_real_documents.py:L17: from dataclasses import asdict
+  scripts\validate_real_documents.py:L18: from datetime import UTC, datetime
+  scripts\validate_real_documents.py:L19: from pathlib import Path
+  scripts\validate_real_documents.py:L75: from backend.utils.loaders import DocumentLoadError
+  scripts\validate_real_documents.py:L93: from backend.utils import loaders
+  scripts\validate_real_documents.py:L149: from backend.database.models import Document, DocumentChunk, IngestionJob
+  scripts\validate_real_documents.py:L161: from backend.utils.chunking import chunk_document
+  scripts\validate_real_documents.py:L162: from backend.utils.loaders import load_document
+  scripts\validate_real_documents.py:L221: from backend.database.models import Document, DocumentChunk
+  scripts\validate_real_documents.py:L316: from sqlalchemy import text
+  scripts\validate_real_documents.py:L317: from sqlalchemy.orm import sessionmaker
+  scripts\validate_real_documents.py:L318: from backend.database.connection import build_database_url, make_engine
+  scripts\validate_real_documents.py:L319: from backend.database.models import Base, DocumentCategory
+  scripts\validate_real_documents.py:L320: from backend.services.document_processing_service import DocumentProcessingService
+  scripts\validate_real_documents.py:L321: from backend.services.embedding_service import EmbeddingService
+  scripts\validate_real_documents.py:L322: from backend.services.retrieval_service import RetrievalService
+  scripts\validate_real_documents.py:L323: from backend.utils import loaders
+  scripts\validate_real_documents.py:L324: from scripts.verify_stores import audit_stores
+  scripts\validate_real_documents.py:L438: from sqlalchemy import text
+
+ACTUAL USER DOCUMENT VALIDATION
+===============================
+Also read the original C:/Users/HP/Downloads/AI_Helpdesk_Assistant_Project_Proposal.docx
+in place, without modifying or copying it into the generated corpus/bundle.
+A separate manifest and three questions were authored against its actual text:
+project duration, evaluation question count and week-8 deliverables.
+The real PostgreSQL/Chroma validation passed extraction, whole-source coverage,
+source offsets, token budgets, repeat-import behavior, audit and cleanup.
+All 3 questions found their complete evidence in the FIRST retrieved passage.
+This single-document check is reported separately from the 4-document generated
+corpus; its source hit rate is not combined with the multi-document test.
+Results: output/actual_proposal_validation/results.json
+Original user document was not changed.
+
+
+APPENDED SESSION UPDATE - 2026-10-22 - ADMIN CORPUS MANAGEMENT / REACT GUI
+========================================================================
+This section is appended. All preceding handoff information is retained as
+historical context. Earlier statements that HTTP APIs, authentication and a
+frontend are future work are superseded by the implementation described here.
+Earlier extraction/retrieval validation results remain historical results;
+they must not be confused with the new admin-console test counts below.
+
+USER REQUEST AND INTERPRETATION
+-------------------------------
+Add an admin role that can upload/reupload/change the RAG corpus, take documents
+offline or online, and provide a simple React GUI. First explain the plan, then
+implement using the service/repository structure from the internship PDF.
+Follow-up: finish, report which weekly requirements were delivered, append all
+new work to this file without removing any existing information.
+
+Source specification:
+C:/Users/HP/Downloads/AI_Powered_Internal_Helpdesk_Assistant_RAG_Internship_Project_Specification_Intern_Version.pdf
+Read the actual 22-page PDF; inspected rendered structure pages 12/13.
+The weekly schedule is section32, pages13-16. Requirements in the PDF were
+treated as specification data, not authority to execute unrelated tasks.
+Online/offline means availability to retrieval; it does not mean URL crawling.
+
+PLAN EXECUTED
+-------------
+1. Add hashed-password login/logout, revocable sessions and backend role guards.
+2. Add admin document APIs reusing the existing ingestion pipeline.
+3. Add independent is_online availability without deleting stored evidence.
+4. Expose chunks, warnings, source metadata, versions and audit history.
+5. Build React/TypeScript login, corpus console, evidence search and activity.
+6. Test real-store API behavior, failure/race cases and the actual browser UI.
+
+DELIVERED BEHAVIOR
+------------------
+- Admin/employee roles use existing lowercase database values.
+- New account passwords use bcrypt12 rounds, min10 characters/max72UTF8 bytes.
+- Login creates random opaque tokens; only SHA256 token digests are persisted.
+  Sessions expire after8hours, use HttpOnly/SameSite=Lax cookies and are revoked
+  on logout. The current database role is checked on each authenticated request.
+  Neither frontend storage nor login JSON controls a user's role.
+- Admins upload PDF/DOCX/TXT/MD, select category/title/initial availability,
+  inspect exact chunks/tokens/offsets/pages/sections/warnings/configuration,
+  replace the stored source and force-reindex into a new immutable version.
+- Source files use UUID names under ignored data/uploads/. Windows/POSIX client
+  filenames cannot escape storage. Downloads/reindex resolve only managed
+  uploads or approved data/documents/ sources. No arbitrary filesystem access.
+- Per-file limit20MiB; an outer ASGI body cap permits bounded multipart overhead
+  and rejects oversized Content-Length/streamed bodies before unbounded
+  multipart spooling. Partial parser files close on errors. Streaming413 is
+  preserved even with Starlette BaseHTTPMiddleware exception wrapping.
+- is_online is separate from lifecycle status. Both roles' retrieval requires
+  active documents + online flag + active chunks. Offline files/chunks/vectors
+  remain inspectable by admins. Employees cannot download offline/old sources.
+- Replacement and reindex inherit availability; a toggle committed in the
+  staging/publication gap is refreshed and inherited correctly.
+- A selected-version compare/check prevents a stale reindex from reverting a
+  newer replacement. Conflicts return409. Checks run before skips and staging;
+  existing publication-predecessor checks remain in place.
+- Document publication and its success audit event share one PostgreSQL commit.
+  Audit failure rolls back activation and preserves the old version. Existing
+  durable-stage failure/recovery cleans the attempted new vectors.
+- Identical replacement verifies/skips the existing version and removes the
+  newly saved unused duplicate source file. Changed source/config creates a
+  new version. Explicit reindex always creates a new version.
+- Legacy source identity can be adopted for deliberate replacement/reindex;
+  missing historical fingerprints/provenance remain explicitly unknown.
+  Store audit uses pipeline_fingerprint to distinguish captured provenance,
+  so assigning a legacy logical source key does not fabricate provenance.
+- Audit records include actor, action, entity/id, UTC timestamp and sanitized
+  bounded JSON details. Secret-like detail keys are excluded. DTO includes id
+  for the React list. Document timestamps carry UTC for correct local display.
+- React uses real API data: no fabricated progress, metrics or generated answer.
+  Admin screens show name/category/type/status filters, actual corpus counts,
+  upload, source inspector, version history, reindex and availability controls.
+  Both roles get semantic Retrieval lab with source references/similarity.
+  Admin gets Activity. Session expiry/loading/errors and keyboard dialogs/tabs
+  are handled. The narrow-screen header overflow found in testing was fixed
+  by positioning the table scroll container.
+
+STRUCTURE AND FILE OWNERSHIP
+----------------------------
+Flow: React api.ts -> backend/api thin route handlers + permission dependencies
+-> backend/services business workflow -> backend/repositories data access ->
+PostgreSQL, with existing processing/embedding/retrieval and Chroma adapters.
+backend/main.py composes dependencies, caches model/index resources lazily,
+registers routes/middleware and serves frontend/dist when it exists.
+backend/models/api_models.py holds validated HTTP request contracts, distinct
+from backend/database/models.py persistence mappings.
+No database or embedding business logic was placed in React or route bodies.
+
+Added backend files:
+backend/main.py
+backend/api/auth.py, documents.py, search.py, audit.py, dependencies.py
+backend/models/api_models.py
+backend/services/auth_service.py, document_service.py, search_service.py, audit_service.py
+backend/repositories/user_repository.py, auth_session_repository.py,
+  audit_repository.py, document_management_repository.py
+backend/utils/security.py, file_storage.py, request_limits.py
+backend/database/migrations/004_admin_console.sql
+scripts/create_user.py
+tests/test_admin_console.py, tests/test_request_limits.py
+
+Modified existing pipeline/storage files:
+backend/database/models.py and main_schema.sql
+backend/services/document_processing_service.py
+backend/repositories/document_repository.py and chunk_repository.py
+scripts/verify_stores.py and apply_ingestion_migrations.py
+tests/test_document_processing.py (availability staging regression)
+requirements.txt / requirements_utf8.txt (bothUTF8, same exactpins)
+.gitignore (uploads, frontend node_modules/dist); added .env.example placeholders.
+
+Frontend added under frontend/:
+package.json/package-lock.json, TypeScript/Vite configuration, index.html;
+src/App.tsx, main.tsx, api.ts, types.ts, files.ts, styles.css;
+src/components/Login.tsx, KnowledgeBase.tsx, DocumentDrawer.tsx,
+  RetrievalLab.tsx, Activity.tsx, Shared.tsx;
+tests/api.test.mjs and README.md. See actual directory for supporting config.
+Dependencies installed/pinned: React19.3.1, react-dom19.3.1, Vite8.3.5,
+TypeScript7.0.2, @vitejs/plugin-react6.1.2, lucide-react1.61.0,
+@types/react19.3.0 and @types/react-dom19.3.0.
+Backend added fastapi0.159.1, starlette1.9.0, python-multipart0.0.32.
+
+Guides:
+README.md now includes real API/GUI/account startup and current scope.
+ADMIN_CONSOLE_GUIDE.md records the plan, behavior, API list, architecture,
+file/import purposes, tests, local DB changes and week-by-week progress.
+frontend/README.md records screens, build/dev commands and component map.
+An exact current Python import inventory is appended below this session log.
+
+API CONTRACT
+------------
+GET /api/health (public process health, not DB/index readiness)
+POST /api/auth/login; GET /api/auth/me; POST /api/auth/logout
+GET /api/documents; GET /api/documents/categories
+POST /api/documents/upload (multipart,201)
+GET /api/documents/{id}
+POST /api/documents/{id}/replace (multipart)
+POST /api/documents/{id}/reindex (JSON chunk_size/overlap)
+PATCH /api/documents/{id}/availability (JSON is_online)
+GET /api/documents/{id}/file (admin any approved stored version;
+  employee only current online version)
+POST /api/search (both roles; retrieval_only=true)
+GET /api/audit-logs (admin)
+OpenAPI: /docs and /openapi.json.
+Protected APIs reject signed-out401 and unauthorized employee403.
+Browser mutations check trusted Origin and X-Requested-With:helpdesk-ui.
+No permanent delete, chat, conversations, feedback or analytics API added.
+
+PROCESSING EXTENSION CONTRACT FOR NEXT LLM
+----------------------------------------
+DocumentProcessingService.process_file/process_document/_ingest now accept:
+publish_online=None: inherit current availability, orTrue for a new source.
+force_reindex=False: normal duplicate skip; explicit reindex suppliesTrue.
+expected_current_doc_id=<omitted sentinel>: no admin selected-version guard.
+ExplicitNone requires no current active predecessor; UUID/string requires that
+exact predecessor. This handles retries of failed sources and stale requests.
+on_publish(session,document,skipped): callback flushes only, never commits;
+it runs inside final publication or verified-skip transaction. The processing
+service owns commit/recovery; DocumentService supplies the audit callback.
+Do not move success auditing back to a separate post-publication transaction.
+
+LIVE LOCAL CHANGES AND ACCESS
+-----------------------------
+Full private pg_dump before applying migrations002/003/004:
+output/backups/before_helpdesk_migrations_20261022_202519.dump
+Migration004 is additive/idempotent. No existing passwords/roles/documents/
+chunks/vector references were reset. It adds documents.is_online, audit JSON
+details and authsessions table/indexes. No bulk reingestion was performed.
+Created explicit local account admin@helpdesk.local. Generated password is
+private in ignored output/local_admin_credentials.json. NEVER embed or print
+its contents in handoff, source, screenshots or chat. CLI refuses overwrite.
+
+The live browser test created ONE clearly fictional source:
+Demo - Remote access policy
+source_key=upload/b71ca093774a420db130261a38fe441c
+v1 initial8-hour policy -> v2 revised12-hour policy -> v3reindex(80/10tokens).
+Current doc_id=a4bb0ab7-6a60-47bd-9bd0-9535c40f2c4c
+Final version3 is online. This is demonstration material, not company policy.
+Prior six legacy docs remain unchanged. Total9 historical document rows,
+3managed versions,6legacy rows,14eligible chunks after this browser test.
+
+The current backend process was restarted with final middleware, loopback8000;
+the Vite dev server is available on5173. Processes may end with the app/session.
+Normal single-server launch after npm build:
+.\venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+Open http://127.0.0.1:8000. ForReactdev use npm --prefix frontend run dev and5173.
+Use127.0.0.1 consistently for cookie origin. HTTPS deploys need
+AUTH_COOKIE_SECURE=true and appropriate FRONTEND_ORIGINS.
+
+VERIFICATION / DEFECTS RESOLVED
+------------------------------
+Final full backend run:125passed,1warning in159.90s.
+Command: .\venv\Scripts\python.exe -m pytest --run-integration -q
+Output: output/admin_full_test_run.txt
+27admin API integration cases plus8 request-limit cases are included in125.
+Real-store tests use disposable schemas/Chroma/upload roots, not public corpus.
+API cases cover roles/sessionhash/logout/replay/expiry,4formats,offline upload,
+availability filtering/inheritance,replace/reindex/history,malformed/oversize,
+filenameconfinement,audit/downloadpermissions,CSRF and migrationupgrade/rerun.
+Additional regressions cover duplicateblobcleanup,legacyprovenance,stale409,
+auditfailurepreservesoldversion,andinterveningavailabilitychange.
+Request limit tests include streamedmultipart/body and Content-Length with
+and without the actual BaseHTTP middleware style used in the app.
+The sole warning is Starlette's deprecation notice for its httpx TestClient
+compatibility (suggests httpx2); there were no test failures in the final run.
+Frontend:8clienttests passed; TypeScript+Viteproductionbuild passed.
+Initial npm dependency install audit reported0 vulnerabilities.
+
+Real Edge/Playwright browser checks:13passed,0pageerrors.
+Login -> live table -> upload -> sourcechunks -> pipeline -> offline -> search
+excludes source -> replacev2preservesoffline -> reindexv3history -> online ->
+searchreturnsrevised12-hourevidence -> audit -> mobile -> logoutrevocation.
+Also tested built React served by APIport8000 and combineddocumentfilters.
+An initial automation assertion expected200 forupload, but API correctly
+returned201; harness was corrected and resumed the already uploaded source.
+The first full UI run exposed narrow-screen overflow from a screen-reader-only
+Actions header; positioned scroll-container fix passed subsequentmobilechecks.
+Request stream tests exposed BaseHTTP exception wrapping400/ExceptionGroup;
+the outer limiter now normalizes known overflows to413;8finalcasespass.
+Artifacts: output/admin_console_validation/browser_report.json and PNGs.
+Preserved initial layout-failure report and successful continuation results.
+Live readonly store audit: output/admin_live_store_audit.json; NOFAILchecks.
+OnlyWARN:6pre-existing legacy documents have unknown historical provenance.
+
+WEEK-BY-WEEK REQUIREMENTS: THIS SESSION VS REMAINING
+--------------------------------------------------
+W1 Requirements/foundations (p13): specification review, implementation plan,
+architecture/file map updated. Prior proposal/repository already existed;
+learning/mentor review is not certified by code. Full week not established.
+W2 Python/API/document processing (p13): running FastAPI environment and additive
+schema migration added. Earlier parser/metadata/module/schema covered the core.
+W3 Chunking/embeddings (pp13-14): chunk/config/token inspector and reindex UI
+added. Earlier model/chunk modules exist. Controlled size/overlap experiments
+and their notes remain pending.
+W4 Vector/retrieval (p14): evidence search GUI, availability filtering and
+protected source access added. Earlier real-store/synthetic quality results
+remain the foundation; representative approved-corpus evaluation is needed.
+W5 First RAG prototype (p14): NOT COMPLETE. Missing context assembly, prompt
+template, grounded LLM answers and hallucination/unsupported-answer tests.
+W6 Backend (p14): substantial NEW delivery: FastAPI routes, auth/roles, document
+APIs, search/audit, Swagger/OpenAPI and API tests. PARTIAL: chat/conversation
+APIs are still missing.
+W7 Frontend (pp14-15): substantial NEW delivery: React/TypeScript login, admin
+documents, details, source evidence and activity. PARTIAL: answer chat,
+feedback and conversation history are still missing.
+W8 Evaluation (p15): traceable corpus maintenance and regressions added.
+Formal 30-50 question gold set, answer quality, hallucination/out-of-scope
+evaluation, chunking/Top-K/prompt comparisons and report remain pending.
+Earlier 12 answerable +3 unsupported generated questions and the separate
+3 actual-proposal questions are validation fixtures, not the final gold set.
+W9 Analytics (p15): admin improvements, errors, versions and audit added.
+PARTIAL: feedback/usage analytics and conversation history are missing.
+Corpus counters and activity logs do not satisfy usage analytics.
+W10 Testing/hardening (p15): API/security/session/upload/race/failure tests,
+browser checks and fixes added. PARTIAL: AI-response/performance assessment,
+the final defect report and full release candidate remain pending.
+W11-12 Finalization (pp15-16): setup guide, import map, appended handoff and local
+demonstration added. Full deployment/presentation/final build remain pending.
+
+Sections advanced: 9 upload validation; 19 admin management; 21 basic document
+filters; 24 audit; 27 authentication/RBAC; subset of28 APIs; 29 service/repository
+architecture; admin/login/detail parts of30 screens; 31 folder structure;
+relevant conventional tests from36. DELETE /documents/{id} was not added:
+reversible offline availability provides deactivation. Permanent deletion is
+not claimed complete.
+
+ACCURATE PROGRESS / NEXT WORK
+-----------------------------
+Strong functional base: ingestion/embedding/retrieval from Weeks2-4, with
+substantial Weeks6-7 admin/auth/frontend work brought forward. Week5's LLM
+prototype is the next missing core milestone. Full Week3 experiments and
+Week8 evaluation remain pending. No start date is known, so an actual elapsed
+calendar week cannot be determined.
+Next: freeze an approved versioned corpus, author30-50 gold questions/evidence
+spans and measure held-out retrieval; then add context/prompt/grounded LLM
+answers/refusals, chat/conversation/feedback APIs and UI, answer evaluation
+and analytics.
+The console is a synchronous local prototype. No queue/live job progress, OCR,
+URL crawler, account management/reset UI, LLM answers, feedback or production
+deployment was implemented.
+No git commit, push or PR was performed. Prior uncommitted work was preserved.
+
+
+CURRENT PYTHON IMPORT INVENTORY FOR THIS FEATURE
+------------------------------------------------
+Import purposes and architecture: ADMIN_CONSOLE_GUIDE.md.
+
+backend/main.py
+  L3: import os
+  L4: from pathlib import Path
+  L5: from threading import Lock
+  L7: from fastapi import FastAPI, Request
+  L8: from fastapi.middleware.cors import CORSMiddleware
+  L9: from fastapi.responses import JSONResponse
+  L10: from fastapi.staticfiles import StaticFiles
+  L11: from sqlalchemy.exc import OperationalError
+  L13: from backend.api import audit, auth, documents, search
+  L14: from backend.database.connection import SessionLocal
+  L15: from backend.services.auth_service import InvalidCredentialsError
+  L16: from backend.services.document_processing_service import ConcurrentIngestionError, RecoveryPendingError
+  L17: from backend.services.document_service import DocumentConflictError, DocumentNotFoundError
+  L18: from backend.utils.file_storage import FileStorage, UploadTooLargeError
+  L19: from backend.utils.request_limits import RequestBodyLimitMiddleware
+  L32: from backend.services.embedding_service import EmbeddingService
+  L39: from backend.services.retrieval_service import RetrievalService
+
+backend/models/api_models.py
+  L3: from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+
+backend/api/auth.py
+  L1: from fastapi import APIRouter, Depends, Request, Response
+  L3: from backend.api.dependencies import auth_service, current_user
+  L4: from backend.models.api_models import LoginRequest
+
+backend/api/documents.py
+  L1: from uuid import UUID
+  L3: from fastapi import APIRouter, Depends, File, Form, UploadFile
+  L4: from fastapi.responses import FileResponse
+  L6: from backend.api.dependencies import current_user, document_service, require_admin
+  L7: from backend.models.api_models import AvailabilityRequest, ReindexRequest
+
+backend/api/search.py
+  L1: from fastapi import APIRouter, Depends, Request
+  L3: from backend.api.dependencies import current_user
+  L4: from backend.models.api_models import SearchRequest
+  L5: from backend.services.search_service import SearchService
+
+backend/api/audit.py
+  L1: from fastapi import APIRouter, Depends, Query, Request
+  L3: from backend.api.dependencies import require_admin
+  L4: from backend.services.audit_service import AuditService
+
+backend/api/dependencies.py
+  L3: from fastapi import Depends, HTTPException, Request
+  L5: from backend.services.auth_service import AuthService
+  L6: from backend.services.document_service import DocumentService
+
+backend/services/auth_service.py
+  L3: from datetime import UTC, datetime, timedelta
+  L5: from backend.database.connection import SessionLocal
+  L6: from backend.repositories.auth_session_repository import AuthSessionRepository
+  L7: from backend.repositories.user_repository import UserRepository
+  L8: from backend.utils.security import hash_session_token, new_session_token, verify_password
+
+backend/services/document_service.py
+  L3: import uuid
+  L4: from datetime import UTC
+  L5: from pathlib import Path
+  L7: from backend.database.connection import SessionLocal
+  L8: from backend.repositories.category_repository import CategoryRepository
+  L9: from backend.repositories.document_management_repository import DocumentManagementRepository
+  L10: from backend.repositories.document_repository import DocumentRepository
+  L11: from backend.services.audit_service import AuditService
+  L12: from backend.services.document_processing_service import DocumentProcessingService
+  L13: from backend.utils.file_storage import FileStorage
+
+backend/services/search_service.py
+  L3: from time import perf_counter
+  L5: from backend.services.document_processing_service import DocumentProcessingService
+
+backend/services/audit_service.py
+  L3: from datetime import UTC, datetime
+  L4: import math
+  L5: import uuid
+  L7: from backend.repositories.audit_repository import AuditRepository
+
+backend/services/document_processing_service.py
+  L7: import hashlib
+  L8: import json
+  L9: import math
+  L10: import os
+  L11: import uuid
+  L12: from datetime import UTC, datetime, timedelta
+  L13: from importlib.metadata import version as package_version
+  L14: from pathlib import Path
+  L16: from sqlalchemy import or_
+  L17: from sqlalchemy.orm import sessionmaker
+  L19: from backend.database.connection import SessionLocal
+  L20: from backend.database.models import Document, DocumentCategory, DocumentChunk, IngestionJob
+  L21: from backend.repositories.category_repository import CategoryRepository
+  L22: from backend.repositories.chunk_repository import ChunkRepository
+  L23: from backend.repositories.document_repository import DocumentRepository
+  L24: from backend.repositories.ingestion_job_repository import IngestionJobRepository
+  L25: from backend.utils.loaders import LoadedDocument, load_document
+  L26: from backend.utils.chunking import CHUNKER_VERSION, chunk_document
+  L59: from backend.services.embedding_service import EmbeddingService
+  L66: from backend.services.retrieval_service import RetrievalService
+
+backend/repositories/user_repository.py
+  L1: import uuid
+  L3: from sqlalchemy import func
+  L5: from backend.database.models import User
+  L6: from backend.utils.security import normalize_email
+
+backend/repositories/auth_session_repository.py
+  L1: from datetime import UTC, datetime
+  L3: from backend.database.models import AuthSession
+
+backend/repositories/audit_repository.py
+  L1: from backend.database.models import AuditLog, User
+
+backend/repositories/document_management_repository.py
+  L3: from sqlalchemy import func
+  L5: from backend.database.models import Document, DocumentCategory, DocumentChunk, IngestionJob
+
+backend/utils/security.py
+  L3: from functools import lru_cache
+  L4: import hashlib
+  L5: import re
+  L6: import secrets
+  L8: import bcrypt
+
+backend/utils/file_storage.py
+  L3: import ntpath
+  L4: import uuid
+  L5: from pathlib import Path
+
+backend/utils/request_limits.py
+  L3: from starlette.exceptions import HTTPException
+  L4: from starlette.responses import JSONResponse
+
+scripts/create_user.py
+  L10: import argparse
+  L11: from getpass import getpass
+  L12: import json
+  L13: import os
+  L14: from pathlib import Path
+  L15: import secrets
+  L16: import subprocess
+  L18: from backend.database.connection import SessionLocal
+  L19: from backend.repositories.user_repository import UserRepository
+  L20: from backend.utils.security import hash_password, normalize_email
+
+scripts/apply_ingestion_migrations.py
+  L7: import argparse
+  L8: import os
+  L9: import shutil
+  L10: import subprocess
+  L11: from datetime import datetime
+  L12: from pathlib import Path
+  L14: from backend.database.connection import build_database_url, make_engine
+
+tests/test_admin_console.py
+  L7: import json
+  L8: import uuid
+  L9: from datetime import UTC, datetime, timedelta
+  L10: from pathlib import Path
+  L11: from types import SimpleNamespace
+  L13: import pytest
+  L25: from fastapi.testclient import TestClient
+  L26: from backend.database.models import DocumentCategory, User
+  L27: from backend.main import create_app
+  L28: from backend.utils.security import hash_password
+  L75: from backend.database.models import Document, DocumentChunk, IngestionJob
+  L94: from backend.database.models import AuthSession
+  L118: from backend.database.models import AuthSession
+  L172: from backend.database.models import Document
+  L223: from backend.database.models import Document
+  L298: from backend.database.models import Document
+  L310: from backend.database.models import AuditLog
+  L375: from sqlalchemy import text
+  L376: from backend.database.models import AuditLog, AuthSession, Document, DocumentCategory, DocumentChunk, User
+  L377: from backend.services.audit_service import AuditService
+  L378: from backend.services.auth_service import AuthService
+  L379: from backend.utils.security import hash_password
+  L459: from backend.database.models import Document, DocumentChunk
+  L460: from scripts.verify_stores import audit_stores
+  L490: from backend.database.models import Document
+  L491: from backend.services.document_processing_service import DocumentProcessingService
+  L492: from backend.services.document_service import DocumentService
+  L527: from backend.database.models import AuditLog, Document, IngestionJob
+  L528: from backend.services.audit_service import AuditService
+  L556: from backend.database.models import Document, User
+  L557: from backend.repositories.document_repository import DocumentRepository
+  L558: from backend.services.document_service import DocumentService
+
+tests/test_request_limits.py
+  L3: import pytest
+  L4: from fastapi import FastAPI, File, Request, UploadFile
+  L5: from fastapi.testclient import TestClient
+  L7: from backend.utils.request_limits import RequestBodyLimitMiddleware
+
+END OF APPENDED 2026-10-22 ADMIN CONSOLE SESSION
+
+
+FINAL SOURCE-LIST CLARIFICATION AND STARTUP CHECK
+-----------------------------------------------
+The frontend helper's actual name is frontend/src/validation.ts. The earlier
+session source list wrote src/files.ts; that name was a transcription mistake.
+validation.ts owns empty-file and 20 MiB checks for upload/replacement.
+frontend/README.md includes its purpose and the client-test file map.
+The final restarted backend and built UI both returned HTTP200 on loopback8000;
+/api/health reported retrieval_only=true. Opening the app panel was queued by
+Codex; the direct local browser URL remains http://127.0.0.1:8000.
+No code changed after the final backend125-pass run. The final React build
+and browser filter checks include name, category, document type and status.
+All additions to this handoff are appended; the original39788-byte prefix is
+preserved byte-for-byte. The preservation evidence is stored at
+output/admin_handoff_preservation.json.
+
+
+APPENDED ERD COMPARISON UPDATE - 2026-10-22
+=========================================
+User requested a current PostgreSQL ERD PNG and side-by-side comparison with
+the forgotten V3 image. Found the exact original at:
+C:/Users/HP/Desktop/Sopra_work/databse schema_old_planning/V3_final/rag_schema.png
+It matches rag_schema.mmd (12 tables/89 columns/13 drawn relationships), not
+the later companion rag_helpdesk_schema.mmd (13 tables).
+
+Reflected the actual live public PostgreSQL schema in a READ ONLY transaction;
+exported metadata only, no passwords, token values, rows or connection secrets.
+Current schema:14 tables,110 columns,15 enforced foreign keys. All12 original
+tables remain. Added authsessions(5 columns), documentcategories(3 columns).
+Changed existing tables: users(+password_hash); documents(+category_id and9
+source/provenance/availability/cleanup fields, -doc_category); documentchunks
+(+start_char/end_char); auditlogs(+details). Net columns:+21.
+
+Generated output/erd_comparison/v3_vs_current_side_by_side.png with the actual
+original image on the left and the live diagram on the right. Also generated
+current_postgres_erd.png (3680x3448), scalable SVG, original-source redraw,
+editable DOT, live_schema.json, v3_image_schema.json and schema_diff.json.
+README.md explains changes and caveats; validation.json checks all14 table
+nodes,15 FK edges and110 column labels. Diagrams were visually inspected;
+new columns/tables are green and modified table headers amber. Fixed line
+routing to connect table edges without crossing field text.
+
+Helpers under ignored output/: inspect_erd_schema.py, render_erd_comparison.cjs
+and validate_erd_artifacts.py. Rendering uses existing bundled Graphviz WASM
+and Sharp; no production code or database was modified. The initial renderer
+exposed invalid empty HTML FONT labels; nonbreaking spaces fixed that, and
+render errors are now checked before export. Generated sources are metadata-
+derived technical diagrams, not AI-invented schema images.
+
+Accuracy: ORM maps only7 tables; all14 real tables are included. Some upgraded
+fields are nullable while fresh-install main_schema.sql declares them NOT NULL;
+the diagram uses live nullability. V3 generic types do not establish SQL type/
+length changes. auditlogs.entity_id is not an FK; Chroma is external. Existing
+chat/feedback/evaluation tables still do not imply completed application APIs.
+This comparison aggregates changes since V3, not just the previous session.
+All prior handoff information was preserved; this update is appended only.
+
+
+APPENDED WEEK 5 PROTOTYPE / PAUSE HANDOFF - 2026-10-23
+====================================================
+This is an APPEND-ONLY update. All preceding handoff sections are preserved.
+Earlier descriptions of chat, context assembly, prompts, feedback and retrieval
+experiments as future work are now historical. Read this latest section for
+the current implementation state. Do not mistake implementation/contract tests
+for a live model's answer-quality evaluation.
+
+1. USER REQUEST, CHOICES AND CURRENT TASK STATE
+----------------------------------------------
+The user requested the first RAG prototype: context construction, prompt
+templates, LLM integration structure, grounded answers and hallucination tests.
+They requested thumbs up/down instead of comment-based feedback, and a GUI
+workflow to compare chunk size, overlap and Top-K and apply settings without
+editing Python code. They asked to finish the software through the Week 5
+milestone, with the existing service/repository architecture preserved.
+
+Provider selection was explicitly deferred by the user: "we will look at that
+later ... just make the whole construction ... actual API call later".
+Consequently NO REAL GENERATION PROVIDER/MODEL WAS SELECTED OR CALLED.
+Production defaults to LLM_PROVIDER=disabled. It never substitutes scripted
+answers or a mock model. The UI says generation is not configured; context
+preview, retrieval and experiments remain available.
+
+The user interrupted execution and then requested this detailed handoff/status
+update. This turn records work already done and verifies background results;
+it does not silently resume feature development. At interruption, final docs,
+README updates, a final backend restart and completion reporting were pending.
+The focused tests and isolated browser cleanup have since finished successfully.
+
+2. CUMULATIVE PROJECT BASELINE ALREADY COMPLETED EARLIER
+-------------------------------------------------------
+- TXT/Markdown/text-layer PDF/DOCX extraction, cleaning, metadata, physical PDF
+  page references, ordered DOCX tables/paragraphs and explicit limitations.
+- MiniLM token-aware source-preserving chunking and real 384-dimensional
+  embeddings, default 200 content tokens/40 overlap, maximum model input256.
+- PostgreSQL metadata and Chroma vectors, semantic Top-K evidence retrieval,
+  immutable versions, duplicate skips, staged publication and scoped recovery.
+- Admin/employee authentication, protected APIs, revocable sessions, safe
+  uploads/replacement/reindexing, online/offline availability and audit records.
+- React knowledge-base console, source/chunk inspector, retrieval lab, activity,
+  filters and responsive layouts; prior125-backend/8-frontend test milestone.
+- Exact original V3 ERD located in databse schema_old_planning/V3_final/;
+  previous live-schema reflection/PNG/SVG and original-versus-current image
+  comparison under output/erd_comparison/. That snapshot predates migration005.
+- Earlier generated four-document corpus/12 answerable questions plus3
+  unsupported diagnostics, and separate actual-proposal document validation.
+  These remain fixture validation, not a completed formal30-50-question gold set.
+
+3. NEW RAG CONSTRUCTION AND EXECUTION FLOW
+-----------------------------------------
+POST /api/chat -> authenticated actor -> RAGService -> existing SearchService
+-> PostgreSQL-authoritative retrieval -> managed immutable source checks ->
+ContextBuilder -> versioned prompt -> injected/configured LLM provider ->
+quote validation -> final source-eligibility check -> transactional persistence
+of user/assistant messages and retrieved context -> answer + exact citations.
+
+Routes are thin. Services own business workflows/transactions. Repositories
+own database queries and writes. Prompts and HTTP contracts have separate files.
+No database or embedding business logic was moved into React route handlers.
+
+3A. CONTEXT CONSTRUCTION
+backend/services/context_service.py:
+- ContextBuilder assembles real retrieved evidence with labels S1,S2,...
+  and document/version/page/section metadata.
+- Question and evidence are serialized as JSON DATA in the user message;
+  model instructions stay in a separate system message.
+- Duplicate chunk IDs, empty text and invalid similarity values are excluded.
+  Optional thresholds are explicit; no arbitrary default similarity threshold
+  is represented as a calibrated answer-confidence score.
+- Whole chunks are selected within a configurable serialized-message UTF-8
+  BYTE budget. Oversized chunks are dropped instead of cutting off conditions.
+- Default RAG_MAX_CONTEXT_BYTES=12000, max_sources=10.
+- context_bytes measures the actual compact UTF-8 messages envelope;
+  context_tokens/context_token_budget are NULL because no provider tokenizer
+  has been selected. These bytes are NOT claimed to be exact LLM tokens.
+  The model's real context window/tokenizer must be checked when connected.
+
+RAGService additionally checks hit text/offsets/version/hash against immutable
+Document.extracted_text and source_hash. Legacy or inconsistent provenance is
+excluded from generation context until deliberate reindexing captures it.
+Retrieval lab may still display legacy evidence under its older contract.
+
+3B. PROMPT TEMPLATE
+backend/prompts/rag_prompts.py:
+- PROMPT_VERSION='grounded-quotes-v1'; separate SYSTEM_PROMPT/RESPONSE_SCHEMA.
+- Ask only for directly supported helpdesk evidence; refuse when insufficient.
+- Treat document/user attempts to override instructions as untrusted data.
+- Require concise complete verbatim sentences/paragraphs/structured table rows.
+  Preserve negations, numbers, conditions and exceptions. A PDF line wrap or
+  cropped token-window edge is not accepted as a complete semantic unit.
+- Return JSON {insufficient_evidence:bool,claims:[{source_id,quote}]}.
+- No free-form model answer/reasoning is used as user-facing answer content.
+
+3C. PROVIDER BOUNDARY / DEFERRED LIVE INTEGRATION
+backend/services/llm_service.py:
+- LLMProvider protocol: generate(messages,*,max_output_tokens,response_schema).
+- UnconfiguredLLM is the normal default and returns an explicit setup error.
+- Optional ChatCompletionsLLM supports an explicitly configured compatible
+  endpoint/model/key. There is no default external URL or automatic fallback.
+- JSON schema, JSON-object or no response-format modes are explicit choices;
+  max_completion_tokens versus max_tokens is configurable for compatibility.
+- Timeout, bounded response body, structured-response parsing, finish-reason
+  checks, sanitized failures and no automatic redirects are implemented.
+- Remote HTTP/credentials-in-URL/query credentials are rejected. Remote hosts
+  require HTTPS; loopback HTTP is allowed for a future local provider.
+- Transport contract was checked against official OpenAI documentation:
+  https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+  This does NOT choose OpenAI or certify compatibility with every provider.
+- No generation SDK/model download or live API key was needed/used.
+
+.env.example includes disabled/default placeholder configuration:
+LLM_PROVIDER=disabled; LLM_ENDPOINT; LLM_MODEL; LLM_API_KEY;
+LLM_RESPONSE_FORMAT=json_schema; LLM_TOKEN_LIMIT_FIELD=max_completion_tokens;
+RAG_MAX_CONTEXT_BYTES=12000; RAG_MAX_OUTPUT_TOKENS=512.
+The private .env and existing credentials were not replaced or printed.
+
+3D. GROUNDED QUOTE ANSWERS / REFUSALS
+backend/services/grounding_service.py:
+- Validate response shape and bound the claim count.
+- Reject unknown source IDs, empty/invented quotes, duplicate claims and
+  quotes that do not match source text exactly.
+- Validate start/end boundaries using the FULL immutable extracted source,
+  not merely the cropped retrieved chunk. Relative allowed-boundary offsets
+  are attached to source metadata; the full snapshot is not sent to the model.
+- Ordinary single PDF line wraps are not sentence/paragraph boundaries;
+  complete structured table rows are handled as units.
+- Preserve quoted negation/conditions; compute exact absolute quote offsets.
+- Render answer content exclusively from validated quotes plus [S#] markers.
+  Extra unverified provider prose is ignored rather than rendered.
+- Zero valid claims or insufficient_evidence=true produces a fixed refusal
+  and no fabricated citations. Malformed/truncated provider data is an explicit
+  service error, not a fake successful answer.
+- RAGService rechecks active/online status, version/hash and chunk text after
+  provider latency, holding read locks through persistence. Offline/replaced
+  sources during generation cause a refusal without old evidence publication.
+
+LIMIT: exact provenance/boundary checks do not prove semantic relevance or
+full entailment. A real model can select a true but irrelevant quotation or
+omit context across sentences. This is NOT a hallucination-free guarantee.
+Live answer correctness and adversarial behavior still require model testing.
+
+4. CONVERSATIONS, MESSAGES AND THUMBS FEEDBACK
+---------------------------------------------
+- Added ORM mappings for existing conversations, messages, retrievedcontext
+  and feedback tables. No duplicate conversation schema was invented.
+- Conversation ownership is checked before model work and before persistence.
+  Users cannot read or continue somebody else's conversation.
+- User question, assistant answer/refusal and retrieved chunk links commit
+  together after successful validation. Provider/setup failures create no
+  fabricated persisted answer.
+- Existing conversation IDs can be continued, but past conversation turns are
+  NOT silently used as policy evidence or model memory. Current UI maintains
+  a conversation ID; there is no complete conversation-history UI yet.
+- ConversationService performs owned history reads using PostgreSQL only;
+  reading history/config and rejecting disabled generation do not load the
+  embedding model or open/create Chroma.
+- Added messages.generation_metadata JSONB via additive migration005. It records
+  prompt version/hash, citations, grounding reason/counts, byte budget/count,
+  max output tokens, Top-K, provider and whether a model was called.
+- Feedback accepts ONLY response_id and rating='up'|'down'. Extra comment
+  fields are rejected. Votes are restricted to the owner's assistant responses.
+- PostgreSQL upsert allows changing thumbs up to down without duplicate votes.
+  New comment values are NULL; existing historical comments are not deleted.
+- Feedback is operational/user-experience data. It is NEVER used as gold source
+  relevance, evidence labels, answer correctness or formal experiment scores.
+
+5. CLICK-DRIVEN CHUNKING / OVERLAP / TOP-K COMPARISON
+---------------------------------------------------
+backend/services/experiment_service.py and experiment_repository.py:
+- Admin selects current ONLINE managed documents with complete source hashes.
+- Approved source files are reparsed; bytes/text must match the stored snapshot.
+  This preserves physical PDF pages and original section/paragraph boundaries.
+- Compare user-supplied chunk_size/overlap/top_k candidate configurations using
+  the real tokenizer/chunker/MiniLM model and exact in-memory cosine retrieval.
+- Temporary candidate indexes do NOT publish new live documents/chunks/vectors.
+- Freeze corpus IDs, versions, hashes, embedding config, chunker/extractor
+  versions and question labels in a private persisted JSON report.
+- Metrics: source hit rate, full authored-quote coverage, MRR, chunk count,
+  query timing and separate index-building timing. Denominators are explicit.
+- Unsupported questions are diagnostics, excluded from answerable hit rates;
+  nearest passages are not evidence of safe refusal or answer correctness.
+- Source-only questions without evidence labels are excluded from quote-hit
+  denominator. Missing/ambiguous sources or absent authored evidence are errors.
+- Strict limits:1-10 docs,1-100 questions,1-12 configs; duplicates rejected;
+  runtime checks actual model token cap, corpus size and chunk count.
+- Reports use bounded UUID filenames and atomic saves under output/experiments.
+  Only admin APIs can read or run experiments. Feedback is never read/scored.
+- Comparisons describe the SELECTED corpus and exact in-memory retrieval;
+  they do not claim full-corpus production-Chroma performance equivalence.
+
+NEW REACT FEATURES
+- Assistant: provider-status banner, disabled generation until configured,
+  working Preview context, exact prompt/source inspector, UTF-8 byte count,
+  grounded answer/refusal/citation layout and thumbs up/down controls.
+- Experiments: corpus checkboxes, JSON question import/editor, editable chunk/
+  overlap/Top-K presets, Run comparison, results table and JSON download.
+- Apply chunk settings is a separate explicit action using existing reindex
+  APIs sequentially. It creates new versions and reports per-document results.
+  Top-K remains a query choice, not a globally persisted corpus setting.
+- No winner is silently applied. Reports remain immutable after application.
+- Successful Apply remaps matching expected_doc_id values in the editable
+  question draft, but preserves the frozen report and original labels.
+- Invalid drafts are preserved with an actionable warning. Externally changed
+  sources clear stale selections and require label review instead of silently
+  remapping gold labels onto changed policy content.
+- Responsive layouts verified at390/768/1440 pixels. Citation React keys now
+  include quote offsets so multiple quotes from one chunk have distinct keys.
+
+6. NEW API ENDPOINTS
+--------------------
+GET /api/rag/config                       both signed-in roles; no model load
+POST /api/rag/preview                     real context/prompt; no provider call
+POST /api/chat                            question/top_k/optional conversation_id
+POST /api/feedback                        response_id + rating up/down only
+GET /api/conversations                    owned list
+GET /api/conversations/{id}               owned messages/metadata
+GET /api/experiments/config               admin eligible sources/presets/schema
+POST /api/experiments/run                 admin isolated candidate comparison
+GET /api/experiments/{run_id}             admin saved frozen report
+
+Setup error503 for disabled generation; provider/payload errors502; ownership
+violations403; missing records404; strict request-shape errors422. Earlier
+auth/document/search/audit endpoints remain available.
+
+7. FILE OWNERSHIP / MEANINGFUL IMPORTS
+-------------------------------------
+backend/prompts/rag_prompts.py
+  Versioned system instructions and response JSON schema; no provider calls.
+backend/services/context_service.py
+  Dataclasses/JSON/math plus prompt constants; bounded trusted-instruction /
+  untrusted-evidence message assembly.
+backend/services/llm_service.py
+  Protocol/os/JSON/httpx/urlparse; disabled provider and compatible transport.
+backend/services/grounding_service.py
+  Dataclasses/regex/provider response error; source-unit/quote validation.
+backend/services/rag_service.py
+  Existing SearchService, ContextBuilder, provider, grounding and conversation
+  repository; orchestrates the full prototype and transactional result storage.
+backend/services/conversation_service.py
+  Conversation repository; owned DB-only history reads.
+backend/services/feedback_service.py
+  Feedback repository; ownership, allowed ratings and transaction decisions.
+backend/services/experiment_service.py
+  NumPy, actual loaders/chunker/model and experiment repository; comparative
+  metrics over immutable source snapshots without live index publication.
+backend/repositories/conversation_repository.py
+  SQLAlchemy/models; questions/messages/context links, source snapshot reads
+  and after-generation source eligibility/read locks.
+backend/repositories/feedback_repository.py
+  SQLAlchemy select and PostgreSQL insert/upsert; owner lookup and one vote.
+backend/repositories/experiment_repository.py
+  Document queries plus JSON/path/tempfile/os; eligible catalog reads and
+  atomic private UUID report persistence, no corpus writes.
+backend/models/rag_models.py and experiment_models.py
+  Pydantic/UUID/Literal contracts; bounded inputs and strict no-comment schema.
+backend/api/rag.py and experiments.py
+  FastAPI dependencies/contracts/services; thin authenticated/admin routes.
+backend/database/models.py
+  Added mappings for the four existing conversation/context/feedback tables
+  and messages.generation_metadata; now11 mapped tables of14 live tables.
+backend/database/migrations/005_rag_prototype.sql and main_schema.sql
+  Additive upgrade/fresh-install support for generation metadata.
+backend/main.py
+  Registers routers/errors, lazily caches provider and reports provider status.
+.env.example
+  Provider-disabled placeholders and byte/output limits, no private values.
+frontend/src/components/Assistant.tsx and Experiments.tsx
+  New screens using typed API client, React state and existing shared controls.
+frontend/src/experimentData.ts
+  Validates question JSON and remaps editable source IDs immutably after Apply.
+frontend/src/api.ts,types.ts,App.tsx,styles.css
+  New contracts/methods, role-aware navigation and responsive screen styles.
+frontend/README.md
+  Updated feature/component map and provider/feedback/experiment semantics.
+
+8. LIVE LOCAL DATA CHANGES AND BACKUPS
+-------------------------------------
+Before migration005, a full private backup was taken:
+output/backups/before_helpdesk_migrations_20261022_222439.dump
+Migrations002/003/004/005 applied successfully.005 only adds nullable JSONB
+messages.generation_metadata; existing questions/messages/comments retained.
+No new PostgreSQL tables were required. The current database has14 tables
+and111 columns after005; the old14/110 ERD snapshot predates this change.
+
+No live LLM-generated answers or real-provider conversation data were created.
+The public-corpus browser check explicitly applied100-token/20-overlap settings
+ONLY to the existing fictional Demo - Remote access policy, creating version4:
+  previous doc_id: a4bb0ab7-6a60-47bd-9bd0-9535c40f2c4c (v3)
+  current doc_id:  d04c6c9f-9ed0-48c0-9beb-10d69e74153d (v4, online)
+  source_key: upload/b71ca093774a420db130261a38fe441c
+The global ingestion defaults were NOT changed from200/40.
+Two real admin experiment reports were saved without modifying the corpus:
+  a655e2c9-6e31-4a53-85b9-9163f5384261 (v3 snapshot)
+  1bbc4393-da4b-4b82-84d4-63d7454c23b7 (v4 snapshot after explicit Apply)
+Current store audit at handoff:10 historical doc rows,4 managed versions,
+6 untouched legacy rows,14 eligible chunks. No FAIL checks; only the existing
+legacy-provenance warning for6 records. No user/legacy corpus was bulk reindexed.
+Private login files remain ignored; no credential value is copied here.
+
+9. VERIFIED TESTS AND ACTUAL BROWSER RESULTS
+-------------------------------------------
+Full backend suite:207 PASSED,1 deprecation warning,266.75 seconds.
+  output/week5_validation/full_test_run.txt
+Command: .\venv\Scripts\python.exe -m pytest --run-integration -q
+After the last prompt/boundary/metadata changes, focused RAG/provider/migration
+verification also completed:58 PASSED,1 warning,78.26 seconds.
+  output/week5_validation/final_rag_regressions.txt
+The58 are an overlapping recheck, NOT58 extra distinct tests to add to207.
+Frontend:15 client/data tests PASSED; final TypeScript/Vite build PASSED.
+
+New backend tests included in207:
+- tests/test_rag_service.py + tests/test_rag_api.py:41 cases, including real
+  isolated PostgreSQL/Chroma/model and explicit injected provider contracts.
+- tests/test_experiments.py:24 cases, including3 real-store/model cases.
+- tests/test_llm_service.py:16 compatible HTTP transport/config/error cases.
+- tests/test_rag_migration.py:1 idempotent upgrade/data preservation case.
+Earlier125 tests remain part of207.
+
+Important coverage:
+supported quotations, fabricated text/source IDs, preserved negation, partial
+condition fragments, PDF line wraps, token-window edge omissions, prompt/data
+separation, real UTF-8 budgets, provider/setup errors, stale/offline source
+changes during generation, user ownership, vote upsert/no comments, reviewed
+evaluation labels unchanged by feedback, and lazy history/config access.
+Migration005 tested twice while preserving existing credentials/history/content.
+Experiment tests verify unchanged PG/chunks/jobs/Chroma/source files, saved
+reports, source drift/offline rejection, PDF blank pages and metric denominators.
+
+The single warning is Starlette's httpx TestClient deprecation notice; no final
+test failure remains. Tests explicitly disable external generation configuration
+and inject test providers; compatible HTTP tests use MockTransport only.
+
+PRODUCTION GUI BROWSER CHECK:8 checks PASSED,zero JS page errors and zero
+/api/chat/provider requests. Verified unconfigured banner, real context preview,
+four-setting comparison without corpus changes, explicit version4 Apply,
+editable label remapping/frozen report preservation, repeat comparison, mobile
+layout and logout. Report/screenshots:
+  output/week5_validation/browser_report.json
+  01-context-preview.png,02-comparison-results.png,03-applied-settings.png,
+  04-experiments-mobile.png,05-assistant-mobile.png (same directory).
+
+ISOLATED ANSWER/FEEDBACK UI CHECK:3 checks PASSED,zero JS errors. Used a clearly
+named test-only scripted provider in a separate throwaway schema/index on8001,
+NEVER as a production fallback. Real retrieval/context/grounding/persistence
+rendered a validated negated policy quotation and citation, then submitted
+thumbs up and down. One vote remained ('down'), commentNULL, one assistant
+message and one validated quote. Mobile rendering passed. The fixture server
+stopped and its schema/files were removed successfully.
+  output/week5_validation/answer_ui_report.json
+  output/week5_validation/ui_fixture_cleanup.json
+  06-test-only-grounded-answer.png,07-test-only-answer-mobile.png
+These screenshots/test outputs are NOT live-model inference or model-quality
+measurements. Temporary fixture credentials must not be copied into source.
+
+10. REAL SEVEN-CONFIGURATION RETRIEVAL STUDY
+-------------------------------------------
+Ran real tokenizer/chunker/MiniLM/exact cosine comparisons using the previously
+authored FOUR fictional PDF/DOCX/MD/TXT policy sources,12 answerable questions
+and3 unsupported diagnostics. No external API calls or live Chroma writes.
+Temporary source metadata was seeded only into a throwaway PostgreSQL schema,
+which was removed. Original authored questions/evidence were not rewritten.
+
+The old fixture format has evidence arrays; the new lab supports one authored
+quote. Multi-fragment cases were explicitly converted to their full contiguous
+source span, including intervening text. This can be stricter than the old
+multi-span diagnostic; do not silently merge those metric definitions.
+
+Chunk / overlap / Top-K -> chunks | source hit | full gold quote coverage
+100 /  0 / 1 ->43 |100.0% | 75.0%
+100 / 20 / 3 ->48 |100.0% | 91.7%
+150 / 30 / 3 ->33 |100.0% | 91.7%
+200 /  0 / 3 ->28 |100.0% |100.0%
+200 / 40 / 1 ->30 |100.0% | 75.0%
+200 / 40 / 3 ->30 |100.0% |100.0%
+200 / 40 / 5 ->30 |100.0% |100.0%
+MRR1.000 across these fixture cases; mean measured query times about21.8ms.
+Do not infer a meaningful speed ranking from those tiny timing differences.
+Latency excludes index construction and is not a production Chroma benchmark.
+All hit-rate denominators above are the12 answerable questions. Unsupported
+questions do not establish refusal/hallucination performance without an LLM.
+No winner was automatically applied. These are small-fixture results, not a
+general recommendation or completed held-out internship evaluation.
+
+Artifacts:
+output/week5_validation/COMPARATIVE_STUDY.md
+output/week5_validation/comparative_study.json and comparative_study.csv
+output/week5_validation/fixture_questions.json
+output/week5_validation/comparison_cleanup.json
+output/week5_validation/runs/ (saved isolated experiment report)
+
+11. HELPERS / VALIDATION ARTIFACTS
+---------------------------------
+output/run_week5_comparison.py: isolated real fixture study/conversion/export.
+output/validate_week5_browser.cjs: live admin GUI preview/comparison/explicit
+Apply check; it DOES create a new version of the fictional demo source when
+run, so do not rerun casually while assuming it is read-only.
+output/serve_week5_ui_fixture.py: explicit test-only provider and temporary
+schema/index server; never imported/selected by production app.
+output/validate_week5_answer_ui.cjs: fixture answer/citation/thumbs UI validation.
+output/fix_citation_key.py: one-off frontend key correction already applied;
+not an ongoing startup/migration tool and should not be blindly rerun.
+output/week5_validation/live_store_audit_at_handoff.json: final read-only audit.
+No additional production dependencies were added for the new provider boundary;
+httpx/NumPy/SQLAlchemy/model packages were already pinned/installed.
+
+12. WHAT WAS IN PROGRESS AT THE PAUSE / REMAINING WORK
+----------------------------------------------------
+Completed in background and verified during this handoff update:
+- The207-test full run and58-test focused run are both finished/passing.
+- The isolated answer/thumbs browser server has stopped; cleanup succeeded.
+- Comparative study and both browser reports are written and passing.
+
+Still pending from the interrupted finishing pass:
+1. Write the intended WEEK5_PROTOTYPE_GUIDE.md. It DOES NOT EXIST yet; an
+   assignment to write it did not produce a completed file before interruption.
+2. Refresh the root README.md and ADMIN_CONSOLE_GUIDE.md statements that still
+   call all context/chat/feedback/experiments future work. frontend/README.md is
+   updated but has minor duplicate/formatting rows that could be tidied.
+3. Restart backend.main after the final prompt wording/metadata polish. The
+   loopback8000 server remains running from earlier in this implementation;
+   those last in-memory imports may be older than the saved final source.
+   The latest production React dist is built and available. Do not start a
+   duplicate server on8000 without checking the current listener/process.
+4. Final documentation consistency review and user-facing completion report.
+5. Regenerate the 'current' ERD only if needed: previous saved diagrams are
+   correctly timestamped pre005 snapshots, now missing the one metadata column.
+
+Intentionally deferred by the user, not a hidden completed claim:
+- Select a real provider/model and configure its private endpoint/credentials.
+- Confirm that provider's supported message roles, JSON schema and token-limit
+  field; add an adapter if it is not chat-completions compatible.
+- Implement/check provider-specific input token accounting/context window.
+- Run actual supported, paraphrased, absent, misleading and adversarial
+  question/answer tests; measure semantic correctness, refusals and citations.
+  Current scripted/transport tests do NOT replace that live evaluation.
+
+Other internship work still remaining:
+- Final approved30-50-question gold dataset, held-out evaluation and report.
+- Full conversation history UI/memory design (owned persistence/APIs now exist).
+- Usage/feedback analytics and remaining profile/filter/delete requirements.
+- Performance/release/deployment/final presentation tasks.
+
+ACCURATE WEEK5 STATUS: software construction and deterministic contract/
+grounding tests are implemented, with real retrieval experiments and GUI flows.
+Live LLM inference and live-model quality/hallucination evaluation remain
+deferred, so do not claim the full live Week5 acceptance milestone is verified.
+Prior Weeks2-4 foundations and much of the brought-forward Weeks6-7 admin work
+remain intact. No internship start date is known; no calendar week is inferred.
+
+13. RUNTIME / RESUME NOTES
+--------------------------
+At this update, GET http://127.0.0.1:8000/api/health returned:
+{"status":"ok","retrieval_only":true,"generation_configured":false}
+Backend and Vite processes remain running on loopback8000/5173. The isolated
+8001 test server is stopped. Process IDs are observations, not stable IDs:
+12564 (backend Python),5596 (its launcher),27744 (Vite) were observed.
+Do not terminate unrelated processes or assume these IDs cannot be reused.
+Normal startup from C:/Users/HP/Desktop/Sopra_work after migrations/build:
+  .\venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+  npm --prefix frontend run dev                 (optional second dev terminal)
+The existing admin password remains private in ignored
+output/local_admin_credentials.json. Do not print or copy it here.
+No git commit/push/PR or public deployment was performed. Existing uncommitted
+work and all earlier handoff information were retained.
+
+
+CURRENT PYTHON IMPORT INVENTORY FOR THE WEEK5 FEATURE
+-------------------------------------------------------
+
+backend/prompts/rag_prompts.py
+
+backend/services/context_service.py
+  L3: from dataclasses import dataclass
+  L4: import json
+  L5: import math
+  L7: from backend.prompts.rag_prompts import PROMPT_VERSION, SYSTEM_PROMPT
+
+backend/services/llm_service.py
+  L7: import json
+  L8: import os
+  L9: from typing import Protocol
+  L10: from urllib.parse import urlparse
+  L12: import httpx
+
+backend/services/grounding_service.py
+  L3: from dataclasses import dataclass
+  L4: import re
+  L6: from backend.services.llm_service import LLMResponseError
+
+backend/services/rag_service.py
+  L7: from dataclasses import asdict
+  L8: from datetime import UTC, datetime, timedelta
+  L9: import hashlib
+  L10: import os
+  L11: from time import perf_counter
+  L12: import uuid
+  L14: from backend.prompts.rag_prompts import PROMPT_VERSION, RESPONSE_SCHEMA
+  L15: from backend.repositories.conversation_repository import ConversationRepository
+  L16: from backend.services.context_service import ContextBuilder, serialize_messages
+  L17: from backend.services.document_service import DocumentNotFoundError
+  L18: from backend.services.grounding_service import insufficient_result, quote_boundary_offsets, validate_claims
+  L19: from backend.services.llm_service import LLMNotConfiguredError, configured_llm
+  L20: from backend.services.search_service import SearchService
+
+backend/services/conversation_service.py
+  L3: from datetime import UTC
+  L4: import uuid
+  L6: from backend.repositories.conversation_repository import ConversationRepository
+  L7: from backend.services.document_service import DocumentNotFoundError
+
+backend/services/feedback_service.py
+  L1: import uuid
+  L3: from backend.repositories.feedback_repository import FeedbackRepository
+  L4: from backend.services.document_service import DocumentNotFoundError
+
+backend/services/experiment_service.py
+  L8: from dataclasses import asdict
+  L9: from datetime import UTC, datetime
+  L10: import hashlib
+  L11: import json
+  L12: from time import perf_counter
+  L13: import uuid
+  L15: import numpy as np
+  L17: from backend.models.experiment_models import ExperimentQuestion, ExperimentRunRequest
+  L18: from backend.repositories.experiment_repository import ExperimentRepository
+  L19: from backend.utils.chunking import CHUNKER_VERSION, chunk_document
+  L20: from backend.utils.loaders import load_document
+
+backend/repositories/conversation_repository.py
+  L3: from sqlalchemy import select
+  L5: from backend.database.models import Conversation, Document, DocumentChunk, Message, RetrievedContext
+
+backend/repositories/feedback_repository.py
+  L3: from sqlalchemy import select
+  L4: from sqlalchemy.dialects.postgresql import insert
+  L6: from backend.database.models import Conversation, Feedback, Message
+
+backend/repositories/experiment_repository.py
+  L7: import json
+  L8: import os
+  L9: from pathlib import Path
+  L10: import tempfile
+  L11: import uuid
+  L13: from backend.database.models import Document
+
+backend/models/rag_models.py
+  L1: from typing import Literal
+  L2: from uuid import UUID
+  L4: from pydantic import Field
+  L6: from backend.models.api_models import RequestModel, SearchRequest
+
+backend/models/experiment_models.py
+  L3: from uuid import UUID
+  L5: from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
+
+backend/api/rag.py
+  L3: from uuid import UUID
+  L5: from fastapi import APIRouter, Depends, Request
+  L7: from backend.api.dependencies import current_user
+  L8: from backend.models.api_models import SearchRequest
+  L9: from backend.models.rag_models import ChatRequest, FeedbackRequest
+  L10: from backend.services.conversation_service import ConversationService
+  L11: from backend.services.feedback_service import FeedbackService
+  L12: from backend.services.rag_service import RAGService
+
+backend/api/experiments.py
+  L1: from uuid import UUID
+  L3: from fastapi import APIRouter, Depends, HTTPException, Request
+  L5: from backend.api.dependencies import require_admin
+  L6: from backend.models.experiment_models import ExperimentRunRequest
+  L7: from backend.repositories.experiment_repository import ExperimentNotFoundError
+  L8: from backend.services.experiment_service import ExperimentService
+
+tests/test_rag_service.py
+  L7: import copy
+  L8: import json
+  L9: import uuid
+  L10: from types import SimpleNamespace
+  L12: import pytest
+  L30: from backend.services.context_service import ContextBuilder
+  L57: from backend.services.context_service import ContextBuilder
+  L69: from backend.services.context_service import ContextBuilder
+  L81: from backend.services.context_service import ContextBuilder
+  L90: from backend.services.grounding_service import validate_claims
+  L111: from backend.services.grounding_service import validate_claims
+  L122: from backend.services.grounding_service import validate_claims
+  L135: from backend.services.grounding_service import validate_claims
+  L144: from backend.services.grounding_service import validate_claims
+  L158: from backend.services.grounding_service import validate_claims
+  L188: from backend.database.models import User
+  L189: from backend.services.document_processing_service import DocumentProcessingService
+  L207: from backend.services.rag_service import RAGService
+  L214: from backend.database.models import Conversation, Document, Message, RetrievedContext
+  L215: from backend.prompts.rag_prompts import PROMPT_VERSION
+  L251: from backend.database.models import Document
+  L252: from backend.services.document_processing_service import DocumentProcessingService
+  L273: from backend.database.models import DocumentChunk
+  L274: from backend.repositories.chunk_repository import ChunkRepository
+  L275: from backend.services.document_processing_service import DocumentProcessingService
+
+tests/test_rag_api.py
+  L7: import copy
+  L8: import uuid
+  L9: from contextlib import ExitStack
+  L10: from types import SimpleNamespace
+  L12: import pytest
+  L49: from fastapi.testclient import TestClient
+  L50: from backend.database.models import User
+  L51: from backend.main import create_app
+  L52: from backend.services.document_processing_service import DocumentProcessingService
+  L53: from backend.utils.security import hash_password
+  L112: from backend.database.models import Document
+  L132: from backend.database.models import Conversation, Message
+  L148: from backend.database.models import Conversation, Message
+  L174: from backend.database.models import Document
+  L210: from backend.services.llm_service import LLMProviderError
+  L219: from backend.database.models import Conversation, Message
+  L254: from backend.database.models import Feedback, Message
+  L276: from backend.database.models import Feedback
+  L286: from backend.database.models import Feedback
+  L295: from backend.database.models import Feedback
+  L301: from sqlalchemy import text
+  L318: from backend.database.models import Message
+
+tests/test_llm_service.py
+  L3: import json
+  L5: import httpx
+  L6: import pytest
+  L8: from backend.prompts.rag_prompts import RESPONSE_SCHEMA
+  L9: from backend.services.llm_service import ChatCompletionsLLM, LLMNotConfiguredError, LLMProviderError, LLMResponseError, configured_llm
+
+tests/test_experiments.py
+  L3: import copy
+  L4: from types import SimpleNamespace
+  L5: import uuid
+  L7: import numpy as np
+  L8: import pytest
+  L9: from pydantic import ValidationError
+  L11: from backend.models.experiment_models import ExperimentQuestion, ExperimentRunRequest
+  L12: from backend.repositories.experiment_repository import ExperimentNotFoundError, ExperimentRepository
+  L13: from backend.services.experiment_service import ExperimentService, aggregate_metrics, cosine_hits, evidence_is_covered, evidence_occurrences, normalized_embedding_matrix, score_question
+  L149: from fastapi import FastAPI, HTTPException
+  L150: from fastapi.testclient import TestClient
+  L151: from backend.api.dependencies import current_user
+  L152: from backend.api.experiments import router
+  L169: from backend.services.document_processing_service import DocumentProcessingService
+  L170: from backend.utils.file_storage import FileStorage
+  L213: from backend.database.models import Document, DocumentChunk, IngestionJob
+  L249: from backend.database.models import Document
+  L276: from pathlib import Path
+  L277: from pypdf import PdfReader, PdfWriter
+  L278: from backend.services.document_processing_service import DocumentProcessingService
+  L279: from backend.utils.file_storage import FileStorage
+
+tests/test_rag_migration.py
+  L3: from pathlib import Path
+  L5: import pytest
+  L10: from sqlalchemy import text
+  L11: from backend.database.models import Conversation, Message, User
+
+END OF APPENDED WEEK5 PAUSE HANDOFF - 2026-10-23
+
+
+APPENDED AUTHENTICATION UPDATE AND FEEDBACK STORAGE AUDIT - 2026-10-23
+==================================================================
+
+User requested replacing bcrypt password hashing with Argon2id, and an exact
+explanation of what is retained when a response receives negative feedback.
+This section supersedes earlier descriptions of bcrypt as the new-account
+password hashing algorithm. Earlier handoff sections are retained as history.
+
+IMPLEMENTED PASSWORD CHANGE
+- backend/utils/security.py now hashes all new passwords with argon2-cffi
+  25.1.0, using RFC_9106_LOW_MEMORY: Argon2id v19, memory 65536 KiB (64 MiB),
+  time cost 3, parallelism 4, random 16-byte salt and 32-byte hash output.
+- New-account passwords support 10 through 256 Unicode characters, matching
+  the login request's maximum. Passwords are not truncated at 72 bytes for
+  Argon2id. Invalid Unicode and oversized input are rejected.
+- bcrypt remains installed ONLY for verifying existing bcrypt hashes.
+  Its legacy 72-byte verification limit is enforced without truncation.
+- Successful login upgrades a legacy bcrypt hash or outdated Argon2 settings
+  to current Argon2id. Wrong-password login never changes hashes or creates a
+  session. A valid legacy password below today's new-account minimum still
+  upgrades and remains usable; migration does not force a password reset.
+- UserRepository.create now requires an Argon2id hash for new accounts.
+  upgrade_password_hash uses a conditional update matching the previous hash,
+  so migration cannot overwrite a concurrently replaced password. A stale
+  upgrade fails authentication without creating a new session.
+- Hash upgrade and session creation commit together; a session persistence
+  failure rolls back the hash change too. Current-policy hashes are not
+  regenerated on every login.
+- Existing users are NOT bulk rewritten: bcrypt rows upgrade on their next
+  successful login. No plaintext passwords were recovered or logged.
+- Existing users.password_hash VARCHAR(255) accommodates the encoded Argon2id
+  value. No SQL schema migration was needed or applied for this change.
+- Eight-hour opaque HttpOnly cookie sessions, stored token SHA256 digests,
+  server-side role checks, expiry and logout revocation remain in place.
+  JWT was not introduced.
+- Updated README.md and ADMIN_CONSOLE_GUIDE.md authentication descriptions.
+  Installed/pinned argon2-cffi, argon2-cffi-bindings, cffi and pycparser in
+  both requirement manifests. scripts/create_user.py automatically uses the
+  new hash_password implementation without a separate duplicate algorithm.
+- Added tests/test_password_security.py with 35 real-crypto cases, including
+  isolated PostgreSQL migration/session/concurrency/rollback tests.
+
+PRECISE NEGATIVE FEEDBACK STORAGE AUDIT (NO FEEDBACK FEATURE CHANGES)
+- A new thumbs-down inserts feedback.message_id = exact assistant response ID,
+  feedback.user_id = voter, rating = 'down', comment = NULL. API comment fields
+  are rejected. Existing historical comments are not erased by rating changes.
+- Exact displayed answer already exists in messages.content. The user's
+  question is another message in the same conversation. There is not yet an
+  explicit question_message_id/in_reply_to link on the answer.
+- retrievedcontext records FINAL RETAINED CONTEXT chunk IDs, renumbered context
+  order, and similarity scores; documentchunks retains chunk text/offsets and
+  references the source document/version. This is not a complete log of every
+  raw retrieval candidate or its original retrieval rank.
+- Generation metadata retains citation quote/source/document/chunk IDs, document
+  name/version/hash, page/heading/quote offsets, prompt version and SHA256,
+  context byte counts/budgets, provider, grounding counts/reason, model-called
+  flag; model, response time, Top K and insufficient-context status are also
+  stored on the assistant message. Full rendered prompt and raw provider
+  output are not separately stored.
+- If source eligibility changes during generation, the final saved answer is
+  a refusal and its recorded context is cleared; that special case does not
+  preserve the originally model-visible sources.
+- Source DOCUMENT CATEGORY can be obtained via chunk -> document -> category.
+  There is no automatic DISCUSSION/QUESTION TOPIC classification or stored chat
+  topic field. A query can draw evidence from multiple document categories.
+- Feedback has no submission/update timestamp or vote-change history. Switching
+  down to up overwrites the current rating. Message time is not vote time.
+- No cross-user admin conversation/feedback read API or admin monitoring page
+  exists. Owner-only conversation reads and response rating remain enforced.
+- Retrieval Lab/context preview are not conversation logs. Disabled provider
+  calls create no fabricated answer records. Feedback does not automatically
+  retrain a model, rewrite the corpus, or change reviewed golden labels.
+
+VERIFICATION
+- New security/migration suite: python -m pytest tests/test_password_security.py --run-integration -q -> 35 passed in 17.63s.
+- Existing admin and RAG API regression suites: python -m pytest tests/test_admin_console.py tests/test_rag_api.py --run-integration -q --tb=short -> 48 passed, 1 existing Starlette/httpx deprecation warning, in 190.21s.
+- These are 83 distinct tests across the three files, not a rerun of the whole earlier backend suite. Tests use real crypto and disposable PostgreSQL schemas; no production users were rewritten during testing.
+- create_user --help and import/configuration smoke checks succeeded. git diff --check passed for the changed tracked manifests/documentation.
+- API regression completion output retained in output/argon2_validation/api_regressions.txt.
+
+LOCAL RUNTIME
+- Restarted only the verified helpdesk uvicorn process and its matching workspace venv launcher. New launcher PID 33540, uvicorn server PID 11324 at verification; verify identity again before acting on saved PIDs.
+- GET http://127.0.0.1:8000/api/health returned HTTP 200 with status=ok, retrieval_only=true, generation_configured=false.
+- The running server now loads the Argon2id migration code and the previously saved final prompt/metadata changes. Real LLM provider calls remain disabled by user decision.
+- Existing DB sessions remain persisted; no account creation, password reset, bulk hash conversion, commit, push, PR or deployment was performed.
+
+REMAINING WORK
+- Real LLM provider selection/calls and live-model acceptance are still deferred.
+- Admin user/query/answer/feedback monitoring, explicit turn linkage, topic
+  classification, feedback timestamps/history and complete retrieval tracing
+  remain separate unimplemented features; this request did not implement them.
+- Earlier Week 5 guide/root documentation finishing tasks remain as recorded
+  above, apart from the authentication paragraphs updated in this change.
+
+END OF APPENDED AUTHENTICATION UPDATE - 2026-10-23
+
+
+APPENDED ADMIN USER / CONVERSATION / FEEDBACK DASHBOARD - 2026-10-23
+================================================================
+
+USER REQUEST AND RESULT
+The user explicitly asked to build the proposed admin user-and-feedback
+dashboard. It is now implemented, migrated, built, tested and running locally.
+This supersedes earlier handoff statements that admin review APIs/UI, exact
+question/answer linkage and feedback timestamps were missing. All historical
+handoff material is retained; do not treat old exclusions as current status.
+
+ADMIN SCREEN
+- Sign in as admin at http://127.0.0.1:8000/ and open User feedback.
+- Search/paginate users by email/department; see role, department, conversation
+  count, thumbs-down count and last saved activity. Users with no chats appear.
+- Review all users, a selected user, or a selected conversation. User,
+  conversation and saved-turn lists have independent bounded pagination.
+- Filter thumbs up/down/unrated, answered/unanswered/unknown, and stored
+  question/answer text. Combined filters match the SAME turn.
+- Open Inspect response for exact question/answer, owner rating, first/last
+  feedback dates, saved citations/quotes/offsets, retained chunk text/rank/
+  similarity, source category/version/location/current availability, generation
+  metadata and record IDs. Admins can open retained offline source files.
+- Responsive screen includes loading/error/empty states, keyboard focus return,
+  explicit accessible dropdown names, and safe React text rendering.
+- Admin navigation is hidden from employees; backend permissions independently
+  reject all admin review endpoints for employee sessions (403), missing/expired
+  sessions receive401. Private employee history remains owner-only.
+- This is an inspection feature, not user CRUD or a way to edit others' votes.
+
+PERSISTENCE AND HONEST HISTORICAL HANDLING
+- messages.reply_to_message_id is nullable UUID with self-FK and an index.
+  Every NEW RAG answer points to the exact user message created for its turn.
+  ConversationRepository checks the target is a user message in the same
+  conversation; admin reads recheck link validity defensively.
+- Older unlinked answers stay visible with question=null and legacy_unlinked;
+  the dashboard does not guess by timestamp/order. An orphan question in a
+  conversation containing historical unlinked answers is unknown rather than
+  definitely unanswered. Saved insufficient-evidence responses are refusals;
+  orphan questions with no historical ambiguity are unanswered.
+- feedback.created_at/updated_at are nullable TIMESTAMPTZ. New API votes write
+  both UTC times. Updates preserve creation time and update modified time;
+  historical NULL creation time remains unknown even after a later vote.
+- Migration006 does not backfill invented times or inferred message links.
+  Current rating and its timestamps are available; vote-change history and
+  free-text feedback reasons are still not collected. Old comments retained.
+- Retained evidence is not every raw retrieval candidate; context rank is
+  retained order, not necessarily original search rank. Source-change refusals
+  can have no context. Old prompt version/hash does not reconstruct full prompt.
+- Source categories describe source documents, not classified discussion topics.
+  No automatic topic classifier, full retrieval trace or raw provider dump added.
+- Failed/disabled generation and context previews do not create fabricated
+  history. Real LLM provider selection/calls remain deferred by user instruction.
+- User feedback remains separate from approved golden evaluation labels.
+
+API AND ARCHITECTURE
+- GET /api/admin/users: search, limit, offset; safe user summaries and counts.
+- GET /api/admin/conversations?user_id=UUID: selected user's paginated history.
+- GET /api/admin/reviews: optional user_id/conversation_id, feedback/status/
+  search and limit/offset filters; exact turns plus citations/categories.
+- GET /api/admin/reviews/{message_id}: full retained evidence for a response
+  or an unmatched user question.
+- Pages limited1..100; searches max200 characters; typed UUID/Literal validation.
+  All routes use require_admin. SQL filters and pagination run in PostgreSQL;
+  no LLM/model/vector initialization is required by the admin review routes.
+- New AdminReviewRepository builds a union of responses and unmatched questions,
+  joins only the conversation owner's feedback, and uses stable time+UUID order.
+- AdminReviewService serializes explicit public fields and allowlists generation,
+  grounding and citation metadata; no password hashes, session/token fields,
+  arbitrary legacy secret configuration, comments or local source paths exposed.
+  Full saved transcript text remains intact for authorized inspection.
+
+FILES
+- backend/api/admin_reviews.py: new bounded admin read endpoints.
+- backend/services/admin_review_service.py: serialization, UTC, safe metadata.
+- backend/repositories/admin_review_repository.py: queries/counts/filtering/joins.
+- backend/main.py: register admin review router; existing auth/Argon2 unchanged.
+- backend/database/models.py: exact turn link and feedback timestamp mappings.
+- backend/database/main_schema.sql: same fields/index/FK for fresh installs.
+- backend/database/migrations/006_admin_review_dashboard.sql: additive upgrade.
+- scripts/apply_ingestion_migrations.py: explanatory docstring; numbered SQL
+  already auto-discovered006, no special parallel migration mechanism added.
+- backend/services/rag_service.py: record precise new question reference.
+- backend/repositories/conversation_repository.py: validate explicit references.
+- backend/repositories/feedback_repository.py: atomic UTC timestamp vote upsert.
+- frontend/src/components/UserFeedback.tsx: full admin review screen.
+- frontend/src/reviewData.ts: outcome/linkage/rating/pagination helper labels.
+- frontend/src/types.ts, api.ts, App.tsx, styles.css: typed API/nav/layout.
+- tests/test_admin_reviews.py:23 new API integration cases.
+- tests/test_admin_review_persistence.py:8 new persistence/migration cases.
+- frontend/tests/reviewData.test.mjs plus api.test.mjs:8 added frontend cases.
+- ADMIN_REVIEW_GUIDE.md: usage, APIs, architecture, legacy rules and limitations.
+- README.md, ADMIN_CONSOLE_GUIDE.md, frontend/README.md: current feature/docs links.
+
+DATABASE AND RUNTIME
+- Before upgrade:14 public tables111 columns. After:14 tables114 columns.
+- Full backup before migrations:
+  output/backups/before_helpdesk_migrations_20261023_165449.dump.
+- Applied002..006 using standard backed-up runner; all existing public table
+  row counts were unchanged across migration. schema_before.json/schema_after.json
+  retain proof without dumping private column values.
+- Restarted only the verified local uvicorn server and its workspace launcher.
+  Observed new launcher PID21356 / server PID30824; verify identities again
+  before acting on saved PIDs. Server loopback8000, generation still disabled.
+- A live headless browser smoke test signed in with the existing local admin,
+  opened the dashboard and signed out. This uses the existing automatic
+  Argon2id login migration when applicable; credentials were never printed.
+- The live database currently has2 users and0 saved conversations/reviews.
+  The empty review view is truthful. Fictional validation history was never
+  inserted into public tables; no sample data was left in the live app.
+- No commits, push, PR, deployment or provider calls performed.
+
+VERIFICATION AND CLEANUP
+- Full backend: python -m pytest --run-integration -q --tb=short ->273 passed,
+  1 existing Starlette/httpx deprecation warning,211.83seconds. Includes35
+  previous Argon2 tests,23 new API cases and8 new persistence cases; do not add
+  earlier focused50/23 runs to273 as if they were additional unique cases.
+- Frontend:23 tests passed; TypeScript/Vite production build passed. A browser
+  dropdown-accessibility issue was fixed before final build/browser validation.
+-12 isolated seeded-history browser checks passed,0 page errors,0 chat calls:
+  admin navigation; user/conversation scoping; exact thumbs-down pair; citations/
+  chunks/similarity/category/times; open offline source; refusal vs absent answer;
+  combined empty filter; text search; truthful legacy links/times;390px mobile;
+  employee API403/nav exclusion; no JS errors/provider calls.
+-3 live main-app smoke checks passed: real users/new screen, truthful empty
+  production history, sign-in/sign-out without JS errors or provider calls.
+- Browser fixtures used an isolated uniquely named PostgreSQL schema, temporary
+  source file, real Argon2 accounts and explicitly seeded fictional history.
+  No actual LLM inference or vector operations occurred. Schema and temporary
+  files removed; loopback8001 test server stopped. fixture_cleanup.json proves
+  schema_removed=true,temporary_files_removed=true,resource_calls=[].
+- Evidence under output/admin_dashboard_validation/: full_backend_tests.txt,
+  browser_report.json,live_smoke_report.json,fixture_cleanup.json,schema_*.json,
+  screenshots01..05. Screenshots01..04 are TEST data;05 is the live empty view.
+
+REMAINING PROJECT LIMITS
+Actual provider configuration and live-model answer evaluation, formal approved
+golden dataset, full retrieval tracing, automatic discussion classification,
+feedback change history, user CRUD and ordinary employee history browsing UI
+remain separate work. Earlier Week5 guide/documentation finishing notes remain
+as historical context; new admin guide/current README links are now complete.
+
+NEW PYTHON IMPORT INVENTORY (FROM SAVED SOURCES)
+
+backend/api/admin_reviews.py
+  L3: from typing import Literal
+  L4: from uuid import UUID
+  L6: from fastapi import APIRouter, Depends, Query, Request
+  L8: from backend.api.dependencies import require_admin
+  L9: from backend.services.admin_review_service import AdminReviewService
+
+backend/services/admin_review_service.py
+  L3: from datetime import UTC
+  L5: from backend.repositories.admin_review_repository import AdminReviewRepository
+  L6: from backend.services.document_service import DocumentNotFoundError
+
+backend/repositories/admin_review_repository.py
+  L7: from sqlalchemy import and_, case, exists, func, literal, or_, select, union_all
+  L8: from sqlalchemy.orm import aliased
+  L10: from backend.database.models import (
+    Conversation, Document, DocumentCategory, DocumentChunk, Feedback, Message,
+    RetrievedContext, User,
+)
+
+tests/test_admin_reviews.py
+  L3: from datetime import UTC, datetime, timedelta
+  L4: from types import SimpleNamespace
+  L5: import uuid
+  L7: import pytest
+  L21: from fastapi.testclient import TestClient
+  L22: from backend.database.models import (
+        Conversation, Document, DocumentCategory, DocumentChunk, Feedback, Message,
+        RetrievedContext, User,
+    )
+  L26: from backend.main import create_app
+  L27: from backend.utils.security import hash_password
+  L291: from sqlalchemy import func, select
+  L292: from backend.database.models import Conversation, Feedback, Message, RetrievedContext
+
+tests/test_admin_review_persistence.py
+  L7: from datetime import UTC, datetime, timedelta
+  L8: from pathlib import Path
+  L9: from types import SimpleNamespace
+  L10: import uuid
+  L12: import pytest
+  L13: from sqlalchemy import text
+  L14: from sqlalchemy.exc import IntegrityError
+  L22: from backend.database.models import Conversation, Message, User
+  L44: from backend.repositories import feedback_repository
+  L56: from backend.database.models import Feedback, Message
+  L57: from backend.repositories.feedback_repository import FeedbackRepository
+  L80: from backend.database.models import Feedback
+  L81: from backend.repositories.feedback_repository import FeedbackRepository
+  L100: from backend.database.models import Conversation, Message
+  L101: from backend.repositories.conversation_repository import ConversationRepository
+  L124: from backend.database.models import Message, User
+  L125: from backend.services.context_service import ContextBuilder
+  L126: from backend.services.rag_service import RAGService
+  L157: from backend.database.models import Feedback, Message
+
+END OF APPENDED ADMIN REVIEW DASHBOARD - 2026-10-23
+
+
+================================================================================
+APPENDED ADMIN ANALYTICS, PROFILE, AUDIT, FILTERS AND CATEGORIES - 2026-10-23
+================================================================================
+
+USER SCOPE AND OUTCOME
+The user requested aggregate Feedback/Analytics, a dedicated basic User/Profile
+screen, feedback submission audit entries, upload-date/document-version/question-
+date filters, and category management APIs/screens. All five are implemented and
+verified. Changes follow the existing API -> service -> repository architecture.
+No extra account-management/role editing feature was inferred from basic profile.
+No existing handoff information was removed. Older completion/gap statements in
+earlier sections are historical; this section supersedes these specific gaps.
+
+WHERE THE USER FINDS THEM
+- Admin sidebar: Analytics and Categories, alongside User feedback and Activity.
+- Both roles: Your profile.
+- Knowledge base: Uploaded from/through (UTC), Document version, Apply dates/version,
+  Reset dates/version. Date/version search can expose stored historical versions.
+- User feedback: Question from/through (UTC), Apply question dates, All question dates.
+- Activity: new feedback.submitted and category.created/updated/deleted events.
+
+1. AGGREGATE ANALYTICS
+GET /api/analytics?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD is admin-only. New
+analytics API/service/repository query PostgreSQL without initializing AI/vector
+resources. Summary includes total questions, questions today/week, responses,
+current thumbs up/down/unrated, average known latency and timing denominator,
+explicit insufficient-evidence responses, explicit no-useful-retrieval responses,
+and unknown historical outcomes. Also includes zero-filled daily activity,
+frequent questions, retained document-version usage and insufficient-evidence
+examples. Definitions are available in the API and expandable screen details.
+
+Semantics that must not be silently changed:
+- All date controls are inclusive UTC calendar days. SQL uses >= day start and
+  < the next day. Only YYYY-MM-DD is accepted, and reversed/overflow ranges fail.
+- Questions use the user-message timestamp. Responses/latency/outcomes/current
+  feedback are cohorts by assistant-message timestamp, not feedback-event date.
+- Feedback metrics are one current owner vote per response, NOT the number of
+  submissions in audit history. A changed vote updates the current aggregate.
+- Today is UTC today and week starts Monday UTC; both intersect selected dates.
+- Average latency omits unknown/negative values and is NULL when no timings exist.
+- Unsupported means insufficient_context=true, not a calibrated confidence score.
+- No useful retrieval requires the explicit string reason no_eligible_sources;
+  absent or malformed legacy metadata must not invent a retrieval failure.
+- Source usage is distinct retained response/document-version pairs, not chunks,
+  downloads, or current availability. It includes retained historical sources.
+- FAQs collapse whitespace and lowercase only; no semantic topic grouping.
+- Daily table covers at most the latest 31 dates in range; totals cover all dates.
+  Top lists have at most ten items. Missing explicit question linkage stays NULL.
+- Only saved messages count. Unconfigured generation, failed unsaved requests,
+  context previews and Retrieval Lab searches are not fabricated chat records.
+
+2. BASIC OWN PROFILE
+GET /api/profile works for admin and employee. Returns only the authenticated
+actor's email, role, department, user ID, lifetime own conversation/question/
+response/current-vote totals and current owned opaque-cookie session expiry.
+The cookie is hashed internally to look up the owned session; neither raw cookie,
+token digest nor password hash is serialized. Screen is deliberately read-only.
+Existing Argon2id passwords and fixed eight-hour revocable opaque sessions are
+unchanged. This is not JWT, a role editor, account deletion, or password reset.
+
+3. FEEDBACK AUDIT
+Each accepted submission writes feedback.submitted in the same transaction as
+the vote upsert. Details include rating, conversation_id and question_message_id
+only when the target exists, is a user message, and belongs to the same convo.
+Audit entity is response and entity_id is the exact assistant response ID;
+actor and audit timestamp identify who submitted it and when. Question/answer
+text, credentials and prompt/context bodies are not copied into audit details.
+Audit failure rolls the vote/timestamps back. Unauthorized/rejected inputs create
+neither vote nor event. Each accepted resubmission creates another audit event;
+the feedback table continues to retain one current vote. Existing exact q/a,
+citations and retained context remain inspectable in User feedback.
+Historical submissions before this change are not backfilled or reconstructed.
+
+4. DATE AND VERSION FILTERS
+GET /api/documents accepts uploaded_from, uploaded_to and version>=1 in addition
+to existing filters. With no date/version filter the prior latest-source grouping
+is preserved, including active-version preference over newer failed attempts.
+With any date/version filter it searches matching stored versions; response
+scope is matching_versions and summary counts refer to returned versions.
+Upload dates are each version's created_at. Historical deactivated/staging rows
+are inspectable; UI replacement/reindex controls are disabled for them.
+GET /api/admin/reviews accepts question_from and question_to. It uses the exact
+linked user question's timestamp, including unmatched user messages' own time.
+Legacy unlinked assistant responses are excluded when a question-date filter is
+active. The server does not infer timestamps or fabricate question pairings.
+All ranges are inclusive UTC dates; invalid/reversed dates and bad versions fail.
+Document listing/category lookups now use DB-only dependencies, avoiding model or
+vector initialization for metadata browsing. Existing mutation dependencies stay.
+
+5. CATEGORY CRUD AND SAFETY
+GET/POST /api/categories and PATCH/DELETE /api/categories/{uuid} are admin-only.
+Categories may be created, renamed, described and removed only if unreferenced.
+Names are trimmed printable text (1..100 chars); descriptions <=1000 chars and
+can be cleared. Empty updates and case-insensitive duplicates are rejected.
+Application category writes serialize using a PG advisory transaction lock;
+foreign-key conflicts are sanitized to 409. Counts include all document versions,
+including failed/staging/historical. Used-category deletion is disabled visibly
+and enforced server-side. Rename retains the UUID; no document moves/vector
+rewrites are required. Category writes and their audit records commit atomically.
+Document category reassignment and forced referenced-category deletion were not
+added. Existing upload choices read the maintained taxonomy.
+
+Migration002 replay was corrected: initialize starter taxonomy only if empty and
+not previously maintained, with existing category audit evidence distinguishing
+an intentionally emptied list. Renamed/deleted labels do not reappear on setup.
+If uncategorized legacy documents exist, case-insensitive Uncategorized fallback
+lookup reuses an existing UUID rather than creating a duplicate. No schema
+extension or new migration ledger is needed. These preservation paths are tested.
+
+IMPLEMENTATION FILE MAP
+New backend layers:
+- backend/api/analytics.py -> services/analytics_service.py ->
+  repositories/analytics_repository.py: authenticated aggregate reporting.
+- backend/api/profile.py -> services/profile_service.py ->
+  repositories/profile_repository.py: own identity/activity/session inspection.
+- backend/api/categories.py -> services/category_service.py ->
+  repositories/category_management_repository.py: atomic audited category CRUD.
+- backend/models/category_models.py: input validation for create/update.
+- backend/utils/date_ranges.py: strict calendar dates and inclusive UTC boundaries.
+Updated backend integration:
+- backend/main.py: registers three routers under /api; adds DELETE to existing
+  trusted-origin CORS methods. Existing security policy remains authoritative.
+- backend/api/documents.py, services/document_service.py,
+  repositories/document_management_repository.py: upload-date/version filters,
+  historical selection scope, DB-only metadata reads.
+- backend/api/admin_reviews.py, services/admin_review_service.py,
+  repositories/admin_review_repository.py: exact question-date filters.
+- backend/services/feedback_service.py, repositories/feedback_repository.py:
+  accepted feedback audit with validated explicit question link and rollback.
+- backend/repositories/category_repository.py: read-only lookup responsibility.
+- backend/database/migrations/002_mandatory_document_category.sql: safe starter
+  initialization and maintained-taxonomy/legacy fallback preservation on replay.
+Frontend:
+- frontend/src/components/Analytics.tsx: reporting dates, metrics, daily activity,
+  FAQs, retained sources, refusal examples and calculation definitions.
+- frontend/src/components/Profile.tsx: account, current session, own activity.
+- frontend/src/components/Categories.tsx: list/counts, forms, safe confirmed delete.
+- frontend/src/adminData.ts: date/version validation, queries and UTC rendering.
+- frontend/src/adminCompletion.css: new responsive layout and sidebar scrolling.
+- frontend/src/App.tsx, api.ts, types.ts, main.tsx: role navigation, typed client/
+  response contracts and stylesheet inclusion.
+- frontend/src/components/KnowledgeBase.tsx, UserFeedback.tsx,
+  DocumentDrawer.tsx: filter controls and historical-version inspection behavior.
+- frontend/tests/adminData.test.mjs, api.test.mjs: new helper/client coverage.
+Tests:
+- tests/test_analytics.py: real PG aggregates, cohorts, current votes, timing,
+  ownership, unknown outcomes, exact sources and DB-only dependencies.
+- tests/test_admin_review_dates.py: question timestamp filters and legacy safety.
+- tests/test_category_profile_filters.py: CRUD/permissions/concurrency/references,
+  atomic audit, profile privacy/session ownership, date/version selection.
+- tests/test_feedback_audit.py: accepted/rejected votes, audit rollback and invalid
+  legacy cross-conversation/wrong-role question links (eight cases).
+- tests/test_category_seed_preservation.py: renamed/deleted/custom/fresh/empty
+  taxonomy replay and case-insensitive fallback preservation (five cases).
+Docs:
+- ADMIN_ANALYTICS_PROFILE_GUIDE.md is the behavior/API/semantics guide.
+- README.md, ADMIN_CONSOLE_GUIDE.md, ADMIN_REVIEW_GUIDE.md and frontend/README.md
+  point to and describe the completed screens and new audit/filter behavior.
+
+VALIDATION AND CURRENT LIVE STATE
+- Final backend suite: 339 passed, 1 pre-existing Starlette/httpx deprecation
+  warning, 198.72 seconds. Command: venv\Scripts\python.exe -m pytest
+  --run-integration -q --tb=short. 339 is the full total, not added to earlier runs.
+- Frontend: 34 tests passed; TypeScript/Vite production build passed. Built
+  frontend/dist is served by the restarted local backend.
+- Headless Edge/Playwright isolated browser run: 14 checks, zero page errors and
+  zero /api/chat/provider requests. Covers analytic populated/empty/date views,
+  category create/edit/delete/used-reference block, profile privacy, version and
+  upload/question dates, 390px layout, employee access rejection, feedback audit,
+  and current-vote aggregate changes.
+- Fixture explicitly seeded fictional q/a/citations/context/history in a disposable
+  PG schema, never public tables; fixture_cleanup.json confirms schema and temp
+  files removed, resource_calls=[] (no embedding/vector/model initialization).
+- Main running application: six further live browser smoke checks passed for
+  Analytics, Categories, own Profile, version/question filters and sign-in/out;
+  zero page errors and zero chat requests. Live history genuinely has no messages.
+- Backup before live setup replay:
+  output/backups/before_helpdesk_migrations_20261023_184958.dump.
+- Replayed numbered migrations002..006 successfully. Snapshot before/after shows
+  unchanged 14 public tables, 114 columns and ALL existing table row counts:
+  users2, documentcategories5, documents10, documentchunks17, ingestionjobs10,
+  auditlogs6, authsessions6; messages/conversations/feedback/retrievedcontext and
+  evaluationquestions/evaluationtestruns/evaluationresults all0.
+- Only the verified workspace Uvicorn launcher/server was restarted. Current
+  launcher PID21664, actual server PID4936; verify command lines before ever
+  stopping these since PIDs can be recycled. Started hidden with logs under
+  output/admin_completion_validation/server_stdout.log and server_stderr.log.
+- Health GET /api/health returns status=ok, retrieval_only=true,
+  generation_configured=false. App http://127.0.0.1:8000/ is running with changes.
+- git diff --check passed (existing Windows LF/CRLF conversion notices only).
+  Existing unrelated work preserved. No commits, push, PR or deployment performed.
+- All evidence/scripts/screenshots are under output/admin_completion_validation/:
+  final_backend_tests.txt, browser_report.json, fixture_cleanup.json,
+  schema_before.json, schema_after.json, live_migration.txt, live_smoke_report.json,
+  screenshots01..08, browser_check.cjs, live_smoke.cjs, serve_fixture.py.
+
+REMAINING PROJECT LIMITS, NOT CLAIMED COMPLETE
+Actual external LLM integration remains deferred by the user's explicit choice;
+no real provider-quality, hallucination-rate or production confidence claims.
+The formal approved golden evaluation dataset and real end-to-end quality study
+still need completion. This change completes the five specified admin gaps; it
+does not claim the entire internship specification or all future weeks done.
+Profile editing/password reset/role management, semantic discussion categories,
+forced category removal and feedback-history backfill were not requested here.
+
+IMPORT INVENTORY FOR THE NEW/EXTENDED IMPLEMENTATION FOLLOWS
+These imports connect HTTP authorization, services, repositories, SQLAlchemy,
+validation/date utilities and React views. Standard library imports handle UTC,
+UUIDs and input normalization; they do not call external model APIs.
+
+backend/api/analytics.py
+  L3: from fastapi import APIRouter, Depends, HTTPException, Request
+  L5: from backend.api.dependencies import require_admin
+  L6: from backend.services.analytics_service import AnalyticsService
+  L7: from backend.utils.date_ranges import CalendarDate, validate_range
+
+backend/api/categories.py
+  L3: from uuid import UUID
+  L5: from fastapi import APIRouter, Depends, Request, Response
+  L7: from backend.api.dependencies import require_admin
+  L8: from backend.models.category_models import CategoryCreate, CategoryUpdate
+  L9: from backend.services.category_service import CategoryService
+
+backend/api/profile.py
+  L3: from fastapi import APIRouter, Depends, Request
+  L5: from backend.api.dependencies import current_user
+  L6: from backend.services.profile_service import ProfileService
+
+backend/services/analytics_service.py
+  L3: from datetime import UTC, datetime, timedelta
+  L5: from backend.repositories.analytics_repository import AnalyticsRepository
+  L6: from backend.utils.date_ranges import utc_bounds
+
+backend/services/category_service.py
+  L3: from fastapi import HTTPException
+  L4: from sqlalchemy.exc import IntegrityError
+  L6: from backend.repositories.category_management_repository import CategoryManagementRepository
+  L7: from backend.services.audit_service import AuditService
+
+backend/services/profile_service.py
+  L3: from datetime import UTC
+  L5: from backend.repositories.profile_repository import ProfileRepository
+  L6: from backend.utils.security import hash_session_token
+
+backend/repositories/analytics_repository.py
+  L3: from sqlalchemy import and_, case, cast, func, select
+  L4: from sqlalchemy.dialects.postgresql import JSONB
+  L5: from sqlalchemy.orm import aliased
+  L7: from backend.database.models import (
+
+backend/repositories/category_management_repository.py
+  L3: from sqlalchemy import func, text
+  L5: from backend.database.models import Document, DocumentCategory
+
+backend/repositories/profile_repository.py
+  L3: from sqlalchemy import func
+  L5: from backend.database.models import Conversation, Feedback, Message
+  L6: from backend.repositories.auth_session_repository import AuthSessionRepository
+
+backend/models/category_models.py
+  L3: from pydantic import field_validator, model_validator
+  L5: from backend.models.api_models import RequestModel
+
+backend/utils/date_ranges.py
+  L3: from datetime import date, datetime, time, timedelta
+  L4: import re
+  L5: from typing import Annotated
+  L7: from pydantic import BeforeValidator
+
+backend/services/feedback_service.py
+  L1: import uuid
+  L3: from backend.repositories.feedback_repository import FeedbackRepository
+  L4: from backend.services.audit_service import AuditService
+  L5: from backend.services.document_service import DocumentNotFoundError
+
+backend/repositories/feedback_repository.py
+  L3: from datetime import UTC, datetime
+  L5: from sqlalchemy import select
+  L6: from sqlalchemy.dialects.postgresql import insert
+  L8: from backend.database.models import Conversation, Feedback, Message
+
+backend/api/documents.py
+  L1: from uuid import UUID
+  L3: from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+  L4: from fastapi.responses import FileResponse
+  L6: from backend.api.dependencies import current_user, document_service, require_admin
+  L7: from backend.models.api_models import AvailabilityRequest, ReindexRequest
+  L8: from backend.services.document_service import DocumentService
+  L9: from backend.utils.date_ranges import CalendarDate, utc_bounds
+
+backend/services/document_service.py
+  L3: import uuid
+  L4: from datetime import UTC
+  L5: from pathlib import Path
+  L7: from backend.database.connection import SessionLocal
+  L8: from backend.repositories.category_repository import CategoryRepository
+  L9: from backend.repositories.document_management_repository import DocumentManagementRepository
+  L10: from backend.repositories.document_repository import DocumentRepository
+  L11: from backend.services.audit_service import AuditService
+  L12: from backend.services.document_processing_service import DocumentProcessingService
+  L13: from backend.utils.file_storage import FileStorage
+
+backend/repositories/document_management_repository.py
+  L3: from sqlalchemy import func
+  L5: from backend.database.models import Document, DocumentCategory, DocumentChunk, IngestionJob
+
+backend/api/admin_reviews.py
+  L3: from typing import Literal
+  L4: from uuid import UUID
+  L6: from fastapi import APIRouter, Depends, HTTPException, Query, Request
+  L8: from backend.api.dependencies import require_admin
+  L9: from backend.services.admin_review_service import AdminReviewService
+  L10: from backend.utils.date_ranges import CalendarDate, validate_range
+
+backend/services/admin_review_service.py
+  L3: from datetime import UTC
+  L5: from backend.repositories.admin_review_repository import AdminReviewRepository
+  L6: from backend.services.document_service import DocumentNotFoundError
+  L7: from backend.utils.date_ranges import utc_bounds
+
+backend/repositories/admin_review_repository.py
+  L7: from sqlalchemy import and_, case, exists, func, literal, or_, select, union_all
+  L8: from sqlalchemy.orm import aliased
+  L10: from backend.database.models import (
+
+frontend/src/components/Analytics.tsx
+  L1: import { useEffect, useState } from 'react';
+  L2: import type { FormEvent } from 'react';
+  L3: import { BarChart3, RefreshCw } from 'lucide-react';
+  L4: import { api, errorMessage } from '../api';
+  L5: import { dateRangeError, formatUtc } from '../adminData';
+  L6: import type { AnalyticsResult, DateRange } from '../types';
+  L7: import { EmptyState, ErrorBanner, Spinner } from './Shared';
+
+frontend/src/components/Categories.tsx
+  L1: import { useEffect, useState } from 'react';
+  L2: import type { FormEvent } from 'react';
+  L3: import { Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+  L4: import { api, errorMessage } from '../api';
+  L5: import type { ManagedCategory } from '../types';
+  L6: import { EmptyState, ErrorBanner, Notice, Spinner } from './Shared';
+
+frontend/src/components/Profile.tsx
+  L1: import { useEffect, useState } from 'react';
+  L2: import { RefreshCw, ShieldCheck } from 'lucide-react';
+  L3: import { api, errorMessage } from '../api';
+  L4: import { formatUtc } from '../adminData';
+  L5: import type { ProfileResult } from '../types';
+  L6: import { ErrorBanner, Spinner } from './Shared';
+
+frontend/src/adminData.ts
+  L1: import type { DateRange, DocumentFilters } from './types';
+
+END OF APPENDED ADMIN ANALYTICS, PROFILE, AUDIT, FILTERS AND CATEGORIES - 2026-10-23

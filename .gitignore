@@ -7,3 +7,8 @@ __pycache__/
 chroma_db/
 *.egg-info/
 .pytest_cache/
+output/
+tmp/
+data/uploads/
+frontend/node_modules/
+frontend/dist/
