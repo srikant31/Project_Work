@@ -1,6 +1,8 @@
 """Strict request contracts for isolated retrieval configuration experiments."""
 
 from uuid import UUID
+import os
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
@@ -51,6 +53,8 @@ class ExperimentConfiguration(BaseModel):
     chunk_size: StrictInt = Field(ge=8, le=4096)
     overlap: StrictInt = Field(ge=0, le=4095)
     top_k: StrictInt = Field(ge=1, le=20)
+    retrieval_mode: Literal["vector", "bm25", "hybrid"] = Field(
+        default_factory=lambda: os.getenv("RETRIEVAL_MODE", "vector"), validate_default=True)
 
     @model_validator(mode="after")
     def validate_overlap(self):
@@ -73,7 +77,7 @@ class ExperimentRunRequest(BaseModel):
         question_ids = [question.question_id for question in self.questions]
         if len(set(question_ids)) != len(question_ids):
             raise ValueError("Question IDs must be unique")
-        settings = [(c.chunk_size, c.overlap, c.top_k) for c in self.configurations]
+        settings = [(c.chunk_size, c.overlap, c.top_k, c.retrieval_mode) for c in self.configurations]
         if len(set(settings)) != len(settings):
             raise ValueError("Configurations must be unique")
         if not any(question.answerable for question in self.questions):

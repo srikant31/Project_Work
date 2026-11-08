@@ -12,7 +12,7 @@ from backend.models.experiment_models import ExperimentQuestion, ExperimentRunRe
 from backend.repositories.experiment_repository import ExperimentNotFoundError, ExperimentRepository
 from backend.services.experiment_service import (
     ExperimentService, aggregate_metrics, cosine_hits, evidence_is_covered,
-    evidence_occurrences, normalized_embedding_matrix, score_question,
+    evidence_occurrences, normalized_embedding_matrix, score_question, retrieval_hits,
 )
 
 
@@ -111,6 +111,42 @@ def test_cosine_ranking_uses_norms_and_rejects_invalid_embedding_outputs():
     for vectors in ([[0, 0]], [[float("nan"), 1]], [[1]], [[1, 0], [0, 1]]):
         with pytest.raises(ValueError):
             normalized_embedding_matrix(vectors, 1, 2)
+
+
+def test_modes_default_to_application_setting_and_allow_same_chunks_across_modes(monkeypatch):
+    monkeypatch.setenv("RETRIEVAL_MODE", "hybrid")
+    payload = valid_request()
+    assert ExperimentRunRequest.model_validate(payload).configurations[0].retrieval_mode == "hybrid"
+    payload["configurations"] = [{**payload["configurations"][0], "retrieval_mode": mode}
+                                 for mode in ("vector", "bm25", "hybrid")]
+    assert len(ExperimentRunRequest.model_validate(payload).configurations) == 3
+    payload["configurations"][0]["retrieval_mode"] = "unsupported"
+    with pytest.raises(ValidationError):
+        ExperimentRunRequest.model_validate(payload)
+
+
+def test_bm25_finds_exact_error_code_without_vectors_and_does_not_invent_matches():
+    passages = [{"text": "General VPN connection advice."}, {"text": "AUTH-403 means account locked."}]
+    hits = retrieval_hits(passages, None, None, "AUTH-403", 3, "bm25")
+    assert len(hits) == 1 and hits[0]["text"] == passages[1]["text"]
+    assert hits[0]["bm25_score"] > 0
+    assert hits[0]["similarity_score"] is None and hits[0]["fusion_score"] is None
+    assert retrieval_hits(passages, None, None, "unmentioned", 3, "bm25") == []
+
+
+def test_hybrid_uses_production_fusion_and_candidate_depth():
+    from backend.services.hybrid_ranking import bm25, fuse
+    passages = [{"text": f"unrelated {i}"} for i in range(25)]
+    passages[-1]["text"] = "AUTH-403 account locked"
+    matrix = normalized_embedding_matrix([[1, i / 25] for i in range(25)], 25, 2)
+    vector = np.array([1., 0.])
+    lexical = bm25("AUTH-403", {str(i): row["text"] for i, row in enumerate(passages)})[:20]
+    expected = fuse([str(i) for i in range(20)], [key for key, _ in lexical])[:3]
+    hits = retrieval_hits(passages, matrix, vector, "AUTH-403", 3, "hybrid")
+    assert [hit["text"] for hit in hits] == [passages[int(key)]["text"] for key, _ in expected]
+    assert [hit["fusion_score"] for hit in hits] == [score for _, score in expected]
+    # Keyword-only candidates survive even when outside dense candidate depth.
+    assert any(hit["text"] == passages[-1]["text"] and hit["similarity_score"] is None for hit in hits)
 
 
 def test_saved_reports_are_atomic_and_uuid_scoped(tmp_path):
@@ -221,6 +257,28 @@ def _live_snapshot(environment):
             "jobs": [(str(row.id), row.status) for row in session.query(IngestionJob).order_by(IngestionJob.id)],
             "vectors": environment.retriever.collection.get(include=["documents", "metadatas"]),
         }
+
+
+@pytest.mark.integration
+def test_all_retrieval_modes_run_without_modifying_live_index(real_experiment):
+    environment = real_experiment
+    before = _live_snapshot(environment)
+    payload = copy.deepcopy(environment.payload)
+    payload["configurations"] = [{"chunk_size": 200, "overlap": 40, "top_k": 20,
+                                  "retrieval_mode": mode} for mode in ("vector", "bm25", "hybrid")]
+    report = environment.service.run(payload)
+    assert [row["retrieval_mode"] for row in report["results"]] == ["vector", "bm25", "hybrid"]
+    assert [row["reused_index"] for row in report["results"]] == [False, True, True]
+    assert all(row["source_hit_rate"] == 1 for row in report["results"])
+    from backend.services.document_processing_service import DocumentProcessingService
+    with DocumentProcessingService(session_factory=environment.factory, embedder=environment.service.embedder,
+                                   retriever=environment.retriever) as pipeline:
+        for question, evaluated in zip(payload["questions"], report["results"][1]["questions"]):
+            live = pipeline.search(question["question"], 20, mode="bm25")
+            # Identical corpus/chunk settings must yield the same lexical scores.
+            assert {hit["text"]: hit["bm25_score"] for hit in evaluated["hits"]} == {
+                hit["text"]: hit["bm25_score"] for hit in live}
+    assert _live_snapshot(environment) == before
 
 
 @pytest.mark.integration

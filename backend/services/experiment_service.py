@@ -1,7 +1,7 @@
 """Compare retrieval settings on a frozen corpus without publishing any index.
 
-The real parser, tokenizer, chunker and embedding model are reused. Cosine
-retrieval lives only in memory; neither live PostgreSQL rows nor Chroma change.
+The real parser, tokenizer, chunker, embedding model and BM25/RRF functions
+are reused. Dense retrieval lives in memory; live PostgreSQL and Chroma stay unchanged.
 No LLM or feedback rating contributes to these metrics.
 """
 
@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from time import perf_counter
 import uuid
 
@@ -18,6 +19,7 @@ from backend.models.experiment_models import ExperimentQuestion, ExperimentRunRe
 from backend.repositories.experiment_repository import ExperimentRepository
 from backend.utils.chunking import CHUNKER_VERSION, chunk_document
 from backend.utils.loaders import load_document
+from backend.services.hybrid_ranking import bm25, fuse
 
 
 PRESETS = [
@@ -116,6 +118,28 @@ def cosine_hits(passages, matrix, query_vector, top_k):
             for rank, index in enumerate(indices, start=1)]
 
 
+def retrieval_hits(passages, matrix, query_vector, question, top_k, mode):
+    """Use production BM25/RRF and candidate depth on frozen experiment chunks."""
+    if mode not in {"vector", "bm25", "hybrid"}:
+        raise ValueError("Unsupported retrieval mode")
+    if mode == "vector":
+        return [{**hit, "retrieval_mode": mode, "bm25_score": None, "fusion_score": None}
+                for hit in cosine_hits(passages, matrix, query_vector, top_k)]
+    candidates = max(20, top_k * 4)
+    by_id = {str(index): passage for index, passage in enumerate(passages)}
+    keywords = bm25(question, {key: passage["text"] for key, passage in by_id.items()})[:candidates]
+    keyword_scores = dict(keywords)
+    # Internal IDs refer to this frozen index only, never live database chunks.
+    vectors = cosine_hits([{**row, "_id": str(index)} for index, row in enumerate(passages)],
+                          matrix, query_vector, candidates) if mode == "hybrid" else []
+    vector_scores = {hit["_id"]: hit["similarity_score"] for hit in vectors}
+    ranking = fuse([hit["_id"] for hit in vectors], [key for key, _ in keywords]) if mode == "hybrid" else keywords
+    return [{**by_id[key], "rank": rank, "retrieval_mode": mode,
+             "similarity_score": vector_scores.get(key), "bm25_score": keyword_scores.get(key),
+             "fusion_score": score if mode == "hybrid" else None}
+            for rank, (key, score) in enumerate(ranking[:top_k], 1)]
+
+
 class ExperimentService:
     def __init__(self, *, session_factory, storage, embedder=None, output_root=None):
         self.repository = ExperimentRepository(session_factory, output_root)
@@ -127,7 +151,7 @@ class ExperimentService:
                   for row in documents]
         first = documents[0] if documents else None
         return {
-            "documents": public, "presets": PRESETS,
+            "documents": public, "presets": [{**preset, "retrieval_mode": os.getenv("RETRIEVAL_MODE", "vector")} for preset in PRESETS],
             "dataset_schema": {"type": "array", "items": ExperimentQuestion.model_json_schema()},
             "example": [
                 {"question_id": "gold-001", "question": "Replace with a question answered by this source.",
@@ -197,7 +221,7 @@ class ExperimentService:
                            "source_text": source_text, "occurrences": occurrences})
         return labels
 
-    def _index(self, corpus, configuration):
+    def _index(self, corpus, configuration, *, embed=True):
         started = perf_counter()
         passages = []
         for item in corpus:
@@ -211,8 +235,10 @@ class ExperimentService:
                                  "chunk_index": chunk.index, **asdict(chunk)})
             if len(passages) > MAX_CHUNKS:
                 raise ValueError("This configuration creates too many chunks; increase chunk size or reduce overlap")
-        vectors = self.embedder.embed_batch([row["text"] for row in passages])
-        matrix = normalized_embedding_matrix(vectors, len(passages), self.embedder.dimension)
+        matrix = None
+        if embed:
+            vectors = self.embedder.embed_batch([row["text"] for row in passages])
+            matrix = normalized_embedding_matrix(vectors, len(passages), self.embedder.dimension)
         return passages, matrix, (perf_counter() - started) * 1000
 
     def run(self, request):
@@ -225,14 +251,16 @@ class ExperimentService:
             raise ValueError(f"The current embedding model permits at most {maximum} payload tokens per chunk")
         corpus = self._corpus(request.document_ids)
         labels = self._labels(request.questions, corpus)
+        needs_vectors = any(c.retrieval_mode != "bm25" for c in request.configurations)
         question_vectors, embedding_times = [], []
         for label in labels:
             started = perf_counter()
-            vector = self.embedder.embed_text(label["question"].question)
-            question_vectors.append(normalized_embedding_matrix([vector], 1, self.embedder.dimension)[0])
+            vector = self.embedder.embed_text(label["question"].question) if needs_vectors else None
+            question_vectors.append(normalized_embedding_matrix([vector], 1, self.embedder.dimension)[0] if needs_vectors else None)
             embedding_times.append((perf_counter() - started) * 1000)
         warnings = [warning for item in corpus for warning in item["loaded"].warnings]
         warnings.append("Rankings compare only the selected document snapshots; live search can differ when other online sources are present.")
+        warnings.append("Retrieval-only comparison: no chat-history rewrite, table-header expansion, prompt budgeting, LLM generation, citation validation or post-generation eligibility recheck is performed.")
         if any(question.answerable and question.evidence_quote is None for question in request.questions):
             warnings.append("Questions without an evidence quote are scored for source retrieval only and excluded from the evidence-hit denominator.")
         if any(not question.answerable for question in request.questions):
@@ -242,13 +270,14 @@ class ExperimentService:
             key = (configuration.chunk_size, configuration.overlap)
             reused = key in cached
             if not reused:
-                cached[key] = self._index(corpus, configuration)
+                cached[key] = self._index(corpus, configuration, embed=needs_vectors)
             passages, matrix, index_ms = cached[key]
             evaluated = []
             for label, vector, embedding_ms in zip(labels, question_vectors, embedding_times, strict=True):
                 started = perf_counter()
-                hits = cosine_hits(passages, matrix, vector, configuration.top_k)
-                query_latency_ms = (perf_counter() - started) * 1000 + embedding_ms
+                hits = retrieval_hits(passages, matrix, vector, label["question"].question,
+                                      configuration.top_k, configuration.retrieval_mode)
+                query_latency_ms = (perf_counter() - started) * 1000 + (embedding_ms if configuration.retrieval_mode != "bm25" else 0)
                 score = score_question(label["question"], hits, label["expected_doc_id"],
                                        source_text=label["source_text"], occurrences=label["occurrences"])
                 question = label["question"]
@@ -273,11 +302,11 @@ class ExperimentService:
             "results": results, "warnings": list(dict.fromkeys(warnings)),
             "retrieval_only": True,
             "metric_notes": {
-                "retrieval_backend": "Exact normalized cosine in memory; production Chroma indexing and tie order may differ.",
+                "retrieval_backend": "Production BM25 and RRF (constant 60, candidate pool max(20, 4*K)); dense candidates use exact in-memory cosine instead of Chroma. IDs and tie order may differ.",
                 "source_hit_rate": "Expected source found within the selected top K; denominator is answerable questions.",
                 "evidence_hit_rate": "A full authored quote is covered by expected-source top-K offsets; denominator is answerable questions with a quote.",
                 "mean_reciprocal_rank": "Inverse rank of the first expected-source hit, averaged over answerable questions.",
-                "mean_latency_ms": "Question embedding time measured once plus exact cosine ranking; averaged over answerable questions. Gold grading and index building are excluded; index building is reported separately.",
+                "mean_latency_ms": "Ranking plus query embedding for vector/hybrid; BM25 excludes embedding time. Averaged over answerable questions. Database/network, LLM and grading time are excluded; index building is reported separately.",
             },
             "selection_note": "No configuration was applied automatically. Compare evidence coverage, source hits, rank, latency and chunk count; explicitly reindex a document to apply a chosen setting. These results measure retrieval, not generated-answer quality.",
         }

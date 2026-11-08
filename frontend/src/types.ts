@@ -82,7 +82,7 @@ export interface RagPreview {
   context_tokens: null; dropped_sources: number | string[]; token_count_method: 'utf8_bytes';
 }
 export interface ExperimentDocument { doc_id: string; doc_name: string; source_key: string; version: number; source_hash: string }
-export interface ExperimentCandidate { chunk_size: number; overlap: number; top_k: number }
+export interface ExperimentCandidate { chunk_size: number; overlap: number; top_k: number; retrieval_mode?: 'vector' | 'bm25' | 'hybrid' }
 export interface GoldQuestion {
   question_id: string; question: string; expected_doc_id: string | null;
   expected_source_key: string | null; evidence_quote: string | null; answerable: boolean;
