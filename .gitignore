@@ -27,3 +27,6 @@ frontend/dist/
 !/data/documents/
 /data/documents/*
 !/data/documents/ABC-CORP-helpdesk-corpus/
+
+# Local README working draft; exclude from normal Git staging.
+/README draft.md
