@@ -1,0 +1,96 @@
+IT-006 — Email, Calendar, and Collaboration Support Guide
+
+Document control
+
+Field	Value
+Document ID	IT-006
+Title	Email, Calendar, and Collaboration Support Guide
+Version	3.4
+Owner	Collaboration Services Manager
+Approver	Director, IT Operations
+Effective date	03/14/2025
+Review cycle	Annual
+Audience	All workforce members
+Classification	Internal
+
+1. Email
+Q: What is my email address format?
+A: firstname.lastname@abccorp.com. If there are duplicates, middle initials are added. Aliases for previous names are maintained for 12 months after a legal name change.
+Q: What is my mailbox size limit?
+A: 50 GB. Shared mailboxes have a 25 GB limit unless otherwise specified. If you approach your limit, archive older items through the archive feature in the mail client.
+Q: What is the maximum attachment size?
+A: 25 MB per email. For larger files, use the approved file sharing service. Sending Confidential or Restricted information by email attachment is subject to SE-001 transmission rules — use encrypted email or the file sharing service instead.
+Q: Can I access email from a personal device?
+A: Yes, under the BYOD arrangement (SE-005). Personal devices must have a screen lock and must enroll in the mobile device management profile for ABC CORP email.
+Q: Why are some emails marked as external?
+A: Emails from outside ABC CORP are marked with an [EXTERNAL] banner. This is a security feature. Do not click links or open attachments in external emails unless you were expecting them.
+Q: Can I set up mail forwarding to a personal account?
+A: No. Forwarding ABC CORP email to a personal account is prohibited (SE-005). Forwarding to another ABC CORP account is permitted for standard users; forwarding on elevated access accounts requires Information Security approval.
+Q: I deleted an email. Can I get it back?
+A: Deleted items remain in your Deleted Items folder for 30 days. After 30 days, items can be recovered by IT from backups for up to 90 days. After 90 days, items cannot be recovered.
+Q: How do I report a suspicious email?
+A: Use the Report Phishing button in the mail client. Do not forward suspicious emails to other users. For more detail, see SE-002.
+
+2. Calendar
+Q: Why can't I see a colleague's calendar details?
+A: Calendar visibility follows the sharing settings set by the calendar owner. Default visibility is "free/busy only" for most ABC CORP users. If you need more detail to schedule a meeting, contact the colleague.
+Q: How do I share my calendar with a colleague?
+A: Open calendar settings, select "Share," and choose the colleague and the level of access (free/busy, titles only, or full details). Sharing calendars containing Confidential or Restricted information requires Information Security approval.
+Q: Why is a meeting room not bookable?
+A: Rooms may be unbookable for three reasons: the room is out of service, the booking would exceed the room's booking rules, or the room is restricted to a specific team. See FA-002 for meeting room booking.
+Q: How do I delegate my calendar to my assistant?
+A: In calendar settings, select "Delegate Access" and add the assistant with the appropriate role. The assistant must have the same or higher security clearance as you to see full details. For executives, delegation is set up by IT.
+Q: Can I add a calendar to my mobile device?
+A: Yes, through the mobile app or through the standard mobile device sync. Do not add calendars through IMAP or CalDAV — ABC CORP calendars are accessible only through the approved client.
+
+3. Collaboration tools
+Q: Which collaboration tools are approved?
+A: The Approved Software Catalog lists all approved collaboration tools. The primary approved tools are the ABC CORP chat platform, the file sharing service, and the video meeting service. Other tools require an exception per IT-003.
+Q: Can I use a personal chat account for work?
+A: No. Work communications must use ABC CORP-approved tools. This applies to chat, video, and file sharing.
+Q: Why do some chat messages disappear after a period?
+A: ABC CORP chat retention is 1 year (RC-001). Messages are automatically archived after 1 year and are available for legal hold and investigation but are not shown in the client after that period.
+Q: Can I use the file sharing service for client data?
+A: Yes, provided the share is configured per SE-001 (Confidential or Restricted data requires access controls and, for Restricted, Information Security approval of the destination). Personal file sharing services are prohibited.
+Q: How do I record a video meeting?
+A: Recording is available for meetings with more than two participants. All participants must be notified before recording begins. Recordings containing Confidential or Restricted information must be stored per SE-001 and retained per RC-001.
+
+4. Distribution lists and shared mailboxes
+Q: How do I request a new distribution list?
+A: Submit a request through the Service Catalog (SD-003). Lists with more than 200 members require Internal Communications review per RC-002.
+Q: How do I request a shared mailbox?
+A: Submit through the Service Catalog with manager and data owner approval. Shared mailboxes have a designated owner who approves membership.
+Q: Why can't I send to a company-wide list?
+A: Company-wide lists are restricted to Internal Communications and HR Operations to prevent unauthorized broadcast email (RC-002). If you need to reach the whole company, contact Internal Communications.
+
+5. Common issues
+Q: I'm not receiving emails.
+A: Check your mailbox size, check your spam and quarantine folders, and confirm that senders are not blocked. If mail is reaching others but not you, contact the Service Desk.
+Q: Email is delayed.
+A: Delays of up to 5 minutes are normal. Delays longer than 15 minutes may indicate an issue — check the IT status page and contact the Service Desk if the delay persists.
+Q: I can't attach a file.
+A: Confirm the file is under 25 MB and is not a prohibited file type (executables are blocked). If you need to send a large or blocked file, use the file sharing service.
+Q: My calendar is not syncing to mobile.
+A: Confirm the mobile device has the ABC CORP management profile installed and that the device has checked in within the last 30 days. If the profile needs re-enrollment, contact the Service Desk.
+
+6. Getting help
+If your question is not answered here, contact the Service Desk. Have your ticket number ready if you have already submitted one.
+
+7. Related documents
+IT-002 Password, MFA, and Credential Reset Procedure
+IT-003 Software Installation and License Request Guide
+SE-001 Information Classification and Handling Standard
+SE-002 Phishing, Malware, and Suspicious Email Response
+SE-005 Acceptable Use, Device, and Clean Desk Compliance
+SD-003 Service Catalog and Request Fulfillment
+RC-001 Records Retention, Legal Hold, and Disposal
+RC-002 Internal Announcement and Distribution Approval
+FA-002 Desk, Meeting Room, and Hoteling Support
+
+8. Revision history
+
+Version	Date	Change
+2.0	05/30/2022	Converted to FAQ format
+3.0	03-14-2024	Collaboration tools section added
+3.2	09/12/2024	Chat retention clarified
+3.4	March 14, 2025	Mobile sync section added; external banner clarified

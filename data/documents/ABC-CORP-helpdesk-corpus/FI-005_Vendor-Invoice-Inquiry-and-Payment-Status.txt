@@ -1,0 +1,90 @@
+FI-005 — Vendor Invoice Inquiry and Payment Status
+
+Document control
+
+Field	Value
+Document ID	FI-005
+Title	Vendor Invoice Inquiry and Payment Status
+Version	2.5
+Owner	Accounts Payable Manager
+Approver	Director, Finance Operations
+Effective date	March 14, 2025
+Review cycle	Annual
+Audience	Finance, Procurement, Service Desk, vendors
+Classification	Internal
+
+1. Overview
+This document answers the questions most often raised by vendors and by internal requestors about invoice status and payment timing.
+
+2. Standard payment terms
+Q: What are ABC CORP's standard payment terms?
+A: Net 30 from the invoice date, unless a different term is stated in the purchase order or contract. Some vendors have net 45 or net 60 terms based on negotiated contracts.
+Q: When does the clock start?
+A: From the invoice date, provided the invoice is complete and references a valid purchase order. Incomplete invoices are returned and the clock restarts when a compliant invoice is received.
+Q: What payment methods are used?
+A: ACH transfer for domestic vendors, wire transfer for international vendors, and check only where ACH is not available.
+
+3. Invoice requirements
+Q: What must an invoice include?
+A: An invoice must include:
+ABC CORP purchase order number
+Vendor legal name and remittance address
+Invoice number and date
+Line-item detail matching the PO
+Amount and currency
+Tax where applicable
+Payment terms
+Q: What happens if the invoice is missing the PO number?
+A: The invoice is returned. Vendors who repeatedly submit invoices without PO numbers are routed to Procurement for onboarding refresher.
+Q: Where are invoices submitted?
+A: To the AP invoice mailbox listed in the vendor onboarding pack. Invoices sent to individual employees are not processed until forwarded to the AP mailbox by the recipient.
+
+4. Payment status
+Q: How do I check payment status?
+A: Internal requestors can check in the AP system. Vendors should contact their ABC CORP procurement contact or the AP team.
+Q: How long does payment take after invoice approval?
+A: Payment is made on the next scheduled payment run, which occurs weekly on Thursdays. Invoices approved by end of day Tuesday typically pay the following Thursday.
+Q: Is there a way to expedite payment?
+A: Expedited payment is available for invoices where ABC CORP has agreed to accelerated terms or where the vendor has flagged a hardship. Expedite requests go to the AP Manager.
+
+5. Common reasons payment is delayed
+Invoice received without a PO number
+Invoice amount differs from PO
+Goods receipt has not been recorded
+Invoice requires additional approval based on amount
+Vendor banking details not verified
+Vendor insurance certificate expired
+Vendor is on payment hold for compliance reasons
+
+6. Discrepancies
+Q: What if the invoice amount is different from the PO?
+A: The AP team resolves discrepancies with the requestor and vendor. If the difference reflects a change in scope, a change order is required (FI-002). If the difference is an error, the vendor issues a corrected invoice.
+Q: What if the goods were not received?
+A: The invoice cannot be paid until goods receipt is recorded. The requestor records receipt in the procurement system.
+
+7. Vendor holds
+Vendors may be placed on payment hold for:
+Expired insurance or compliance documentation
+Unresolved disputes
+Security findings from a vendor review (VM-001)
+Non-compliance with contracting terms
+Holds are removed by the team that placed them. AP notifies the vendor and the ABC CORP contact when a hold is placed.
+
+8. Escalation
+Escalate to the AP Manager if:
+A payment is more than 15 days past the payment term
+A vendor reports non-receipt of an ACH that AP shows as paid
+A duplicate payment is suspected
+Escalate to Procurement for vendor relationship issues that affect invoice processing.
+
+9. Related documents
+FI-002 Purchase Requisition and Approval Workflow
+FI-003 Corporate Card Administration and Disputes
+VM-001 Vendor Onboarding, Access, and Performance Review
+
+10. Revision history
+
+Version	Date	Change
+2.0	11/05/2022	Converted to FAQ format
+2.3	03-14-2024	Invoice requirements expanded
+2.5	March 14, 2025	Vendor hold section added

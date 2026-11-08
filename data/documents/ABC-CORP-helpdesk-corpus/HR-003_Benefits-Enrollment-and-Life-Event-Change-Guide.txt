@@ -1,0 +1,83 @@
+HR-003 — Benefits Enrollment and Life-Event Change Guide
+
+Document control
+
+Field	Value
+Document ID	HR-003
+Title	Benefits Enrollment and Life-Event Change Guide
+Version	2.6
+Owner	Benefits Manager
+Approver	VP, People Operations
+Effective date	03-14-2025
+Review cycle	Annual
+Audience	All benefits-eligible employees
+Classification	Internal
+
+1. Overview
+This guide answers the questions employees most often ask about benefits enrollment and life-event changes. It is written as an FAQ because most benefits questions are situational and are best answered by matching the employee's situation to the appropriate question.
+Benefits-eligible employees are those scheduled to work 30 or more hours per week. Eligibility for specific benefits may require additional criteria, which are listed in the plan documents.
+
+2. Enrollment windows
+Q: When can I enroll?
+A: New hires enroll within 30 days of their start date. Existing employees enroll during the annual open enrollment window, typically in November for the following plan year.
+Q: What happens if I miss the new-hire enrollment window?
+A: You will not have benefits coverage until the next annual open enrollment unless you experience a qualifying life event. Contact HR Operations immediately if you believe you missed the window due to an error on ABC CORP's part.
+Q: What if I don't enroll during open enrollment?
+A: Your current elections carry forward for most plans. Some plans, such as flexible spending accounts, require active re-enrollment each year and do not carry forward.
+
+3. Qualifying life events
+Q: What is a qualifying life event?
+A: A qualifying life event is a change in your personal circumstances that allows you to change your benefits elections outside the annual enrollment window. Common examples are listed in Section 4.
+Q: How long do I have to make changes after a life event?
+A: 30 days from the event date, unless the plan document specifies a different window. Events that occur on a weekend or holiday still count from the event date, not the next business day.
+Q: What documentation do I need?
+A: Documentation depends on the event. Marriage requires a marriage certificate. Birth or adoption requires a birth certificate or adoption decree. Loss of other coverage requires a termination letter from the other plan. HR Operations confirms the required documentation when you open the case.
+Q: What if I miss the 30-day window?
+A: The change cannot be processed outside the window except in cases where ABC CORP or the plan administrator made an error. Contact HR Operations and explain the situation.
+
+4. Common life events
+Q: I got married. What do I do?
+A: Open a life-event case in the HRIS within 30 days. Add your spouse to the applicable plans, review beneficiary designations, and provide a marriage certificate.
+Q: I had a baby. What do I do?
+A: Open a life-event case within 30 days. Add the child to health, dental, and vision plans. Review life insurance beneficiary designations. Coordinate parental leave with HR-002.
+Q: I got divorced. What do I do?
+A: Open a life-event case within 30 days. Remove your former spouse from plans where required by the divorce decree. Review beneficiary designations. HR Operations coordinates with the plan administrator.
+Q: I lost coverage through another plan. What do I do?
+A: Open a life-event case within 30 days. Provide the termination letter from the other plan. If the loss of coverage is retroactive, note the effective date in the case.
+Q: I moved to a new state. What do I do?
+A: Update your address in the HRIS. Some plans have state-specific networks and may require a plan change. Contact HR Operations if you are unsure whether your move affects eligibility.
+
+5. Flexible spending accounts
+Q: Do I have to re-enroll in the FSA each year?
+A: Yes. FSAs do not carry forward automatically.
+Q: What happens to unused FSA funds?
+A: Per the plan document, a limited amount carries over to the following plan year, or a grace period applies, depending on the plan year. Review the current plan document during open enrollment.
+Q: Can I change my FSA election mid-year?
+A: Only in connection with a qualifying life event, and only if the change is consistent with the event.
+
+6. Beneficiary designations
+Q: Do I need to update beneficiaries?
+A: You should review beneficiaries at least annually and after any life event. Beneficiary designations on file with the plan administrator supersede any will or other document for these plans.
+Q: How do I update beneficiaries?
+A: Update designations through the plan administrator's portal. HR Operations cannot update designations on your behalf.
+
+7. Coverage effective dates
+Q: When does my coverage start?
+A: New-hire coverage starts on the first day of the month following the employee's start date, unless a different effective date is stated in the plan document. Mid-year changes take effect on the first of the month following processing, unless the event requires retroactive coverage.
+Q: When does coverage end?
+A: Coverage ends on the last day of the month in which employment ends, unless a different rule applies. COBRA rights are communicated by the plan administrator.
+
+8. Escalation
+Benefits questions that cannot be resolved by the FAQ above should be routed to HR Operations. Benefits issues involving plan administrator errors should be documented in a case so they can be resolved with the administrator.
+
+9. Related documents
+HR-001 New Hire Onboarding and First-Week Support Checklist
+HR-002 Employee Leave, Time Off, and Attendance Administration
+HR-004 Payroll Inquiry and Correction Procedure
+
+10. Revision history
+
+Version	Date	Change
+2.0	10/12/2022	Converted to FAQ format
+2.5	03-14-2024	Added FSA carryover guidance
+2.6	March 14, 2025	Beneficiary section expanded

@@ -1,0 +1,115 @@
+SD-004 — Knowledge Article Quality and Publishing Standard
+
+Document control
+
+Field	Value
+Document ID	SD-004
+Title	Knowledge Article Quality and Publishing Standard
+Version	2.7
+Owner	Knowledge Manager
+Approver	Director, IT Operations
+Effective date	03-14-2025
+Review cycle	Annual
+Audience	Service Desk, IT Operations, subject matter experts
+Classification	Internal
+
+Document type: Wiki page
+Last edited by: R. Vasquez, Knowledge Management · Last edited: March 14, 2025
+This page is maintained by Knowledge Management. For questions or corrections, contact the Knowledge team directly.
+
+Purpose
+This page sets the standard for knowledge articles in the Service Desk knowledge base. It exists so that every article published meets a consistent quality bar and every agent can trust the articles they use.
+
+What this page covers
+When an article is created
+What an article must contain
+How articles are reviewed
+When articles are retired
+
+When to create an article
+Create a knowledge article when:
+A ticket is resolved and the resolution could apply to other users
+A recurring issue is reported three or more times in a month
+A new catalog item is added
+A process or policy changes
+Do not create an article for:
+One-off resolutions that will not recur
+Resolutions involving confidential or Restricted information (redact or do not publish)
+Content that duplicates an existing article (update the existing article instead)
+
+Article structure
+Every article must have:
+
+Section	Purpose
+Title	Written as the user's question, not as the article's topic — "How do I reset my VPN password?" rather than "VPN password reset"
+Applies to	Which systems, versions, and user groups the article covers
+Audience	Agent-only, user-facing, or both
+Summary	Two to three sentences describing the problem and the solution
+Steps	Numbered, one action per step
+Verification	How the agent confirms the problem is resolved
+Related articles	Linked articles
+Owner	Named individual, not a team
+Review date	Date by which the article must be reviewed
+
+Writing quality
+Articles are written to the reading level of the audience:
+User-facing articles are written in plain language, avoid jargon, and include screenshots where useful
+Agent-facing articles are written in technical language, include exact system paths and tool names, and include decision points
+Style rules:
+Use active voice
+Use imperative for steps ("Click Save", not "The user should click Save")
+Do not use "simply", "just", or "obviously"
+Spell out acronyms on first use
+Use the current product name — do not use legacy names even if users still use them
+
+Screenshots
+Screenshots are permitted and encouraged. Screenshots must:
+Show only the relevant area
+Be redacted of any real user data
+Be current — outdated screenshots are removed when the article is reviewed
+Include alt text for accessibility
+
+Review cycle
+Articles are reviewed on the following schedule:
+
+Article type	Review cycle
+High-volume (used weekly)	Every 6 months
+Standard	Annually
+Low-volume	Every 2 years
+
+Articles past their review date are flagged in the knowledge base and shown with a warning to agents.
+
+Publishing workflow
+1. Draft. Author creates the article in draft status.
+2. Peer review. A second agent reviews for accuracy and clarity. Peer review is mandatory.
+3. Subject matter expert review. For articles covering security, HR, or finance, an SME from the relevant team reviews.
+4. Publish. The Knowledge Manager publishes the article.
+Peer review typically takes 2 business days. SME review may take up to 5 business days.
+
+Retiring articles
+Articles are retired when:
+The system or process they describe no longer exists
+A replacement article covers the same content
+The article has been flagged as inaccurate for more than 30 days
+Retired articles are archived, not deleted, so that historical tickets referencing them remain intelligible.
+
+Article metrics
+The knowledge base reports:
+Article views
+Article usefulness rating (thumbs up / thumbs down)
+Article-linked ticket resolution rate
+Articles past review date
+Authors see their articles' metrics monthly.
+
+Related pages
+SD-001 Ticket Intake, Triage, and Priority Matrix
+SD-003 Service Catalog and Request Fulfillment
+SD-005 Customer Communication, Tone, and Status Update Guide
+RC-001 Records Retention, Legal Hold, and Disposal
+
+Page history
+
+Date	Editor	Change
+03/14/2025	R. Vasquez	Article metrics section added
+09/30/2024	R. Vasquez	Review cycle table updated
+03-14-2024	R. Vasquez	Initial wiki migration

@@ -22,3 +22,8 @@ frontend/dist/
 /schema_run_log.txt
 # Knowledge-base documents are local data; regression fixtures live under tests/fixtures/.
 /data/documents/
+
+# Explicitly approved, versioned ABC-CORP knowledge corpus. Other local corpora stay ignored.
+!/data/documents/
+/data/documents/*
+!/data/documents/ABC-CORP-helpdesk-corpus/

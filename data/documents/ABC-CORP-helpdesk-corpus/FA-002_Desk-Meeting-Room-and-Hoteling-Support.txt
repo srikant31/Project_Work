@@ -1,0 +1,90 @@
+FA-002 — Desk, Meeting Room, and Hoteling Support
+
+Document control
+
+Field	Value
+Document ID	FA-002
+Title	Desk, Meeting Room, and Hoteling Support
+Version	1.6
+Owner	Workplace Services
+Approver	Director, Workplace Services
+Effective date	03-14-2025
+Review cycle	Annual
+Audience	All workforce members, Facilities, Service Desk
+Classification	Internal
+
+Desk assignments
+
+Role type	Assignment
+Designated desk employee	Assigned seat, permanently reserved
+Hoteling employee (hybrid)	Bookable seats, no permanent assignment
+Full remote employee	No seat; day passes available on request
+
+Booking a desk
+
+Step	Action
+1	Open the space booking tool from the intranet
+2	Select the office location and date
+3	Filter by preference — sit/stand, monitor, dual monitor, quiet zone
+4	Select an available seat
+5	Confirm. Booking appears in your calendar
+6	On arrival, badge in at the neighborhood and the seat light shows your booking
+
+Bookings open 14 days in advance and close one hour before the start of the day. Unbooked seats are available on a first-come basis but must be booked in the tool on arrival so that others can see the seat is occupied.
+
+Booking a meeting room
+
+Room type	Capacity	Booking rule
+Focus room	1	Bookable in 30-minute blocks
+Small room	4–6	Bookable in 30-minute blocks
+Medium room	8–12	Bookable in 30-minute blocks
+Large room	12–20	Bookable in 30-minute blocks
+Training room	20–40	Bookable only by Facilities
+
+Rooms are booked through the same space booking tool. Rooms are released automatically 10 minutes after the start time if the room is not occupied, unless the booking is marked as starting late.
+
+Room equipment
+All meeting rooms include:
+Display with HDMI and USB-C input
+Conference camera and microphone
+Speakerphone
+Whiteboard and markers
+Larger rooms also include:
+Dual displays
+Wireless presentation
+Room scheduling panel at the door
+If equipment in a room is not working, submit a ticket through the Service Desk referencing FA-002 and the room name. Do not attempt to repair AV equipment yourself. Do not unplug or rearrange cabling.
+
+Hoteling etiquette
+Cancel bookings you will not use at least two hours before the start time
+Do not leave personal items on a hoteling desk overnight unless you have booked it for the next day
+Return chairs, monitors, and keyboards to their default position at the end of the day
+Wipe down the desk at the end of the day
+Do not store items in shared drawers or lockers without a Facilities-issued lock
+
+Common issues
+
+Issue	Resolution
+Seat light shows red but seat is empty	Booking was cancelled or not confirmed; book in the tool and proceed
+Room scheduling panel not responding	Use the room anyway; submit ticket to Facilities
+AV equipment not detected	Check cable connection at the display first; if still not working, submit ticket
+Booking not appearing in calendar	Confirm the booking completed in the tool; calendar sync can take up to 5 minutes
+Someone in your booked room	Show your booking confirmation; if they do not vacate, contact Facilities
+
+What not to do
+Do not move furniture between rooms
+Do not remove equipment from rooms
+Do not book recurring meetings in focus rooms
+Do not book rooms under another person's name
+Do not use meeting rooms for storage
+
+Related documents
+FA-001 Workplace Access Badge and Visitor Management
+FA-003 Maintenance, Cleaning, and Workplace Defect Reporting
+SD-003 Service Catalog and Request Fulfillment
+
+Revision history
+
+Version	Date	Change
+1.4	03-14-2024	Hoteling section added
+1.6	March 14, 2025	Room release rule added; etiquette section expanded
