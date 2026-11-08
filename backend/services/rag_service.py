@@ -10,6 +10,7 @@ import os
 from time import perf_counter
 import uuid
 
+from backend.database.models import Document, DocumentChunk
 from backend.prompts.rag_prompts import PROMPT_VERSION, RESPONSE_SCHEMA
 from backend.repositories.conversation_repository import ConversationRepository
 from backend.services.context_service import ContextBuilder, serialize_messages
@@ -17,6 +18,7 @@ from backend.services.document_service import DocumentNotFoundError
 from backend.services.grounding_service import GroundingResult, insufficient_result, quote_boundary_offsets, validate_claims
 from backend.services.llm_service import LLMNotConfiguredError, configured_llm
 from backend.services.search_service import SearchService
+from backend.services.table_context import missing_table_header
 from backend.services.query_rewrite_service import QueryRewriteService, Rewrite, REWRITE_VERSION
 import json
 
@@ -52,16 +54,52 @@ class RAGService:
         hits = result["hits"]
         with self.session_factory() as session:
             snapshots = ConversationRepository(session).source_snapshots([hit["doc_id"] for hit in hits])
-        prepared = []
-        for hit in hits:
-            snapshot = snapshots.get(str(hit["doc_id"]))
-            start, end = hit.get("start_char"), hit.get("end_char")
-            if (snapshot is None or snapshot["source_hash"] != hit.get("source_hash")
-                or snapshot["version"] != hit.get("version") or not isinstance(start, int) or not isinstance(end, int)
-                or not 0 <= start < end <= len(snapshot["text"]) or snapshot["text"][start:end] != hit["text"]):
-                continue  # Legacy/changed provenance must be deliberately reindexed.
-            prepared.append({**hit, **quote_boundary_offsets(snapshot["text"], start, end)})
+            prepared = []
+            for hit in hits:
+                snapshot = snapshots.get(str(hit["doc_id"]))
+                start, end = hit.get("start_char"), hit.get("end_char")
+                if (snapshot is None or snapshot["source_hash"] != hit.get("source_hash")
+                    or snapshot["version"] != hit.get("version") or not isinstance(start, int) or not isinstance(end, int)
+                    or not 0 <= start < end <= len(snapshot["text"]) or snapshot["text"][start:end] != hit["text"]):
+                    continue  # Legacy/changed provenance must be deliberately reindexed.
+                prepared.append({**hit, **quote_boundary_offsets(snapshot["text"], start, end)})
+                header_hit = self._table_header_chunk(session, hit, snapshot["text"])
+                if header_hit is not None:
+                    prepared.append(header_hit)
         return self.context_builder.build(result["question"], prepared)
+
+    @staticmethod
+    def _table_header_chunk(session, hit, source_text):
+        """The stored chunk holding the header row of a table continued in hit.
+
+        It is an ordinary immutable chunk (own chunk_id, chunk_text and
+        offsets), so context de-duplication, quote validation and the
+        post-generation eligibility recheck all apply to it unchanged.
+        """
+        header = missing_table_header(source_text, hit["start_char"], hit["end_char"])
+        if header is None:
+            return None
+        header_start, header_end = header
+        row = session.query(DocumentChunk).join(Document).filter(
+            DocumentChunk.document_id == uuid.UUID(str(hit["doc_id"])),
+            DocumentChunk.is_active.is_(True),
+            Document.status == "active",
+            Document.is_online.is_(True),
+            Document.version == hit["version"],
+            Document.source_hash == hit["source_hash"],
+            DocumentChunk.start_char <= header_start,
+            DocumentChunk.end_char >= header_end,
+        ).order_by(DocumentChunk.start_char.desc()).first()
+        if (row is None or str(row.chunk_id) == str(hit["chunk_id"])
+                or not 0 <= row.start_char < row.end_char <= len(source_text)
+                or source_text[row.start_char:row.end_char] != row.chunk_text):
+            return None
+        return {**hit, "chunk_id": str(row.chunk_id), "text": row.chunk_text,
+                "start_char": row.start_char, "end_char": row.end_char,
+                "page_number": row.page_number, "section_heading": row.section_heading,
+                "similarity_score": None, "bm25_score": None, "fusion_score": None,
+                "context_role": "table_header_chunk",
+                **quote_boundary_offsets(source_text, row.start_char, row.end_char)}
 
     def preview(self, question, top_k=3):
         context = self._context(question, top_k)

@@ -45,12 +45,19 @@ def quote_boundary_offsets(source_text, start_char=0, end_char=None):
         while following < len(source_text) and source_text[following].isspace():
             following += 1
         starts.add(following)
-    position = 0
+    lines, position = [], 0
     for line in source_text.splitlines(keepends=True):
-        if line.count("|") >= 2:  # Structured DOCX/TXT table rows are full units.
+        lines.append((position, line))
+        position += len(line)
+    for index, (position, line) in enumerate(lines):
+        # 2+ pipes: Markdown/PDF rows (|a|b|) and 3+ column DOCX rows (a | b | c).
+        # One " | ": a 2-column DOCX row (a | b). It counts only beside another
+        # " | " line, so a lone pipe inside wrapped prose never becomes a unit.
+        docx_pair_row = " | " in line and any(
+            0 <= other < len(lines) and " | " in lines[other][1] for other in (index - 1, index + 1))
+        if line.count("|") >= 2 or docx_pair_row:
             starts.add(position + len(line) - len(line.lstrip()))
             ends.add(position + len(line.rstrip()))
-        position += len(line)
     return {
         "quote_start_offsets": sorted(offset - start_char for offset in starts if start_char <= offset <= end_char),
         "quote_end_offsets": sorted(offset - start_char for offset in ends if start_char <= offset <= end_char),
