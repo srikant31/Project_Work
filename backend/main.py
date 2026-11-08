@@ -15,7 +15,7 @@ from backend.database.connection import SessionLocal
 from backend.services.auth_service import InvalidCredentialsError
 from backend.services.document_processing_service import ConcurrentIngestionError, RecoveryPendingError
 from backend.services.document_service import DocumentConflictError, DocumentNotFoundError
-from backend.services.llm_service import LLMNotConfiguredError, LLMProviderError, LLMResponseError, configured_llm
+from backend.services.llm_service import LLMNotConfiguredError, LLMProviderError, LLMRateLimitError, LLMResponseError, configured_llm
 from backend.utils.file_storage import FileStorage, UploadTooLargeError
 from backend.utils.request_limits import RequestBodyLimitMiddleware
 
@@ -89,7 +89,7 @@ def create_app(*, session_factory=None, embedder=None, retriever=None, upload_ro
     for error, status in ((InvalidCredentialsError, 401), (DocumentNotFoundError, 404),
                           (DocumentConflictError, 409), (ConcurrentIngestionError, 409),
                           (RecoveryPendingError, 503), (UploadTooLargeError, 413),
-                          (LLMNotConfiguredError, 503), (LLMProviderError, 502), (LLMResponseError, 502),
+                          (LLMNotConfiguredError, 503), (LLMProviderError, 502), (LLMRateLimitError, 429), (LLMResponseError, 502),
                           (PermissionError, 403), (ValueError, 400)):
         register_error(error, status)
 

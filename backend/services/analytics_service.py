@@ -13,6 +13,7 @@ DEFINITIONS = [
     "Today is UTC today; this week starts Monday UTC. Both counts intersect the selected range.",
     "Average response time includes only known nonnegative recorded latencies; timed_response_count is its denominator. Missing timing is not zero.",
     "Unsupported means insufficient_context=true, not a calibrated model confidence score. Unknown outcomes are reported separately.",
+    "Clarification responses are counted separately and excluded from unknown outcomes; they are not failed policy retrievals.",
     "No useful retrieval counts only the explicit grounding reason no_eligible_sources. Missing legacy metadata is not classified as retrieval failure.",
     "Document usage counts distinct retained response/document-version pairs, including historical offline sources; it is not downloads or number of chunks.",
     "Frequent questions group lowercase text with collapsed whitespace, not semantic similarity. Lists show at most 10 rows each.",

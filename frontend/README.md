@@ -87,6 +87,8 @@ in the relevant screen. Expired sessions return to sign-in.
 | `src/components/Analytics.tsx` | UTC usage/current-feedback aggregates, daily counts, FAQs and source usage |
 | `src/components/Categories.tsx` | Category creation, rename/description updates and unused-only removal |
 | `src/components/Profile.tsx` | Own account, owned activity and current session expiry for both roles |
+| `src/components/ConversationHistory.tsx` | Owned paginated history, full transcript, saved sources/votes, resume and new-conversation controls |
+| `src/history.css` | Responsive history panes and bounded scrollable conversation list |
 | `src/adminData.ts` | Strict calendar/version validation, query construction and UTC display |
 | `src/adminCompletion.css` | Responsive layouts and scrollable navigation for the added screens |
 | `src/reviewData.ts` | Review outcome/linkage labels and pagination summaries |

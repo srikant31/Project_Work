@@ -1,6 +1,7 @@
 erd2_evaluation_governance_setup_guide.md
 
 venv/
+.venv-docling/
 __pycache__/
 *.pyc
 .env
@@ -12,3 +13,12 @@ tmp/
 data/uploads/
 frontend/node_modules/
 frontend/dist/
+
+# Private reference material and generated reports (never add to future commits).
+/for my reference/
+/docs/reports/
+/doc/reports/
+/LLM_HANDOFF.txt
+/schema_run_log.txt
+# Knowledge-base documents are local data; regression fixtures live under tests/fixtures/.
+/data/documents/

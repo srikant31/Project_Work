@@ -161,6 +161,8 @@ class DocumentProcessingService:
             "chunk_size": chunk_size, "overlap": overlap,
             "embedding": self.embedder.config, "collection": self.retriever.collection_name,
         }
+        if loaded.extraction_metadata:
+            config['extraction'] = loaded.extraction_metadata
         fingerprint = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
         # Fast repeat-import path avoids an unnecessary embedding forward pass.
         self.doc_repo.lock_source(category_id, source_key)
@@ -404,7 +406,45 @@ class DocumentProcessingService:
             fresh.commit()
             return "Active vectors restored from immutable stored chunks"
 
-    def search(self, question, top_k=None, *, _retry_on_version_change=True):
+    def search(self, question, top_k=None, *, mode=None):
+        from backend.services.hybrid_ranking import bm25, fuse
+        mode = mode or os.getenv("RETRIEVAL_MODE", "vector")
+        if mode not in {"vector", "bm25", "hybrid"}:
+            raise ValueError("Retrieval mode must be vector, bm25 or hybrid")
+        k = self.retriever.default_top_k if top_k is None else top_k
+        if not isinstance(k, int) or isinstance(k, bool) or k <= 0:
+            raise ValueError("top_k must be a positive integer")
+        if mode == "vector":
+            return self._vector_search(question, k)
+        candidates = max(20, k * 4)
+        vectors = self._vector_search(question, candidates) if mode == "hybrid" else []
+        # Both branches use the same active/online eligibility rules. No department ACL is asserted.
+        rows = self.session.query(DocumentChunk).join(Document).filter(
+            DocumentChunk.is_active.is_(True), Document.status == "active", Document.is_online.is_(True)).all()
+        by_id = {str(row.chunk_id): row for row in rows}
+        keywords = bm25(question, {key: row.chunk_text for key, row in by_id.items()})[:candidates]
+        keyword_scores = dict(keywords)
+        vector_scores = {hit['chunk_id']: hit['similarity_score'] for hit in vectors}
+        ranking = fuse([hit['chunk_id'] for hit in vectors], [key for key, _ in keywords]) if mode == "hybrid" else keywords
+        result = []
+        # Fresh SQL eligibility check before returning candidates (offline/replaced vectors never suffice).
+        eligible = {str(r.chunk_id): r for r in self.chunk_repo.get_chunks_by_ids([key for key, _ in ranking])}
+        for key, score in ranking:
+            row = eligible.get(key)
+            if row is None:
+                continue
+            doc = row.document
+            result.append({"rank": len(result) + 1, "chunk_id": key, "text": row.chunk_text,
+                "similarity_score": vector_scores.get(key), "bm25_score": keyword_scores.get(key),
+                "fusion_score": score if mode == "hybrid" else None, "retrieval_mode": mode,
+                "page_number": row.page_number, "section_heading": row.section_heading,
+                "start_char": row.start_char, "end_char": row.end_char,
+                "doc_id": str(doc.doc_id), "doc_name": doc.doc_name, "version": doc.version, "source_hash": doc.source_hash})
+            if len(result) == k:
+                break
+        return result
+
+    def _vector_search(self, question, top_k=None, *, _retry_on_version_change=True):
         k = self.retriever.default_top_k if top_k is None else top_k
         if not isinstance(k, int) or isinstance(k, bool) or k <= 0:
             raise ValueError("top_k must be a positive integer")
@@ -442,7 +482,7 @@ class DocumentProcessingService:
                     break
             if len(out) >= k or len(ids) < limit or limit >= maximum:
                 if _retry_on_version_change and len(out) < k and set(self.doc_repo.get_active_document_ids()) != set(allowed):
-                    return self.search(question, k, _retry_on_version_change=False)
+                    return self._vector_search(question, k, _retry_on_version_change=False)
                 return out
             limit = min(maximum, limit * 2)
 

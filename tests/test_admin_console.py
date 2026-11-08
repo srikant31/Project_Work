@@ -172,7 +172,7 @@ def test_admin_upload_all_formats_preserves_file_provenance_and_detail(console, 
     from backend.database.models import Document
 
     login(console)
-    original = (PROJECT_ROOT / "data" / "documents" / filename).read_bytes()
+    original = (PROJECT_ROOT / "tests" / "fixtures" / "documents" / filename).read_bytes()
     document = uploaded(console, filename=filename, content=original)
     assert document["doc_type"] == Path(filename).suffix[1:]
     assert document["version"] == 1 and document["is_online"] is True

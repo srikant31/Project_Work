@@ -1,7 +1,6 @@
 """Question -> retrieval -> bounded prompt -> provider -> verified quotes.
 
-Conversation persistence is separate from context: past turns are not silently
-treated as company-policy evidence. Provider selection is deliberately deferred.
+Current-chat history resolves references but is never company-policy evidence. Provider selection is deliberately deferred.
 """
 
 from dataclasses import asdict
@@ -15,9 +14,11 @@ from backend.prompts.rag_prompts import PROMPT_VERSION, RESPONSE_SCHEMA
 from backend.repositories.conversation_repository import ConversationRepository
 from backend.services.context_service import ContextBuilder, serialize_messages
 from backend.services.document_service import DocumentNotFoundError
-from backend.services.grounding_service import insufficient_result, quote_boundary_offsets, validate_claims
+from backend.services.grounding_service import GroundingResult, insufficient_result, quote_boundary_offsets, validate_claims
 from backend.services.llm_service import LLMNotConfiguredError, configured_llm
 from backend.services.search_service import SearchService
+from backend.services.query_rewrite_service import QueryRewriteService, Rewrite, REWRITE_VERSION
+import json
 
 
 class RAGService:
@@ -37,7 +38,7 @@ class RAGService:
                 "configured": getattr(self.llm, "configured", True), "prompt_version": PROMPT_VERSION,
                 "context_token_budget": None, "context_byte_budget": self.context_builder.max_context_bytes,
                 "max_output_tokens": self.max_output_tokens, "token_count_method": "utf8_bytes",
-                "answer_mode": "verified_source_quotes", "conversation_memory": False}
+                "retrieval_mode": os.getenv("RETRIEVAL_MODE", "vector"), "answer_mode": "verified_source_quotes", "conversation_memory": True, "memory_scope": "current_conversation", "history_max_messages": 6, "history_max_bytes": 6000}
 
     def _context(self, question, top_k):
         if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 20:
@@ -82,19 +83,39 @@ class RAGService:
             raise ValueError("Enter a question of 1 to 4000 characters")
         question = question.strip()
         # Ownership is checked before model work, then again in persistence.
+        history = []
+        history_unavailable = False
         if conversation_id is not None:
             with self.session_factory() as session:
-                self._owned_conversation(ConversationRepository(session), conversation_id, actor)
+                repository = ConversationRepository(session)
+                owned = self._owned_conversation(repository, conversation_id, actor)
+                rows = repository.recent_owned_messages(owned.id, actor.user_id)
+                for row in reversed(rows):
+                    item = {"message_id": str(row.message_id), "role": row.message_provider, "content": row.content}
+                    if len(serialize_messages([item, *history]).encode('utf-8')) > 6000:
+                        break
+                    history.insert(0, item)
+                history_unavailable = bool(rows) and not history
         if not getattr(self.llm, "configured", True):
             raise LLMNotConfiguredError("LLM provider is not configured. Preview the context or use Retrieval lab; provider calls are deferred.")
         started = perf_counter()
-        context = self._context(question, top_k)
-        model_called = bool(context.sources)
-        if context.sources:
-            payload = self.llm.generate(context.messages, max_output_tokens=self.max_output_tokens, response_schema=RESPONSE_SCHEMA)
-            grounded = validate_claims(payload, context)
+        if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 20:
+            raise ValueError("top_k must be between 1 and 20")
+        rewrite = (Rewrite('', 'Please restate the relevant details and your question; the recent message exceeds the conversation context limit.', [], [])
+                   if history_unavailable else QueryRewriteService().resolve(question, history, self.llm))
+        if rewrite.clarification:
+            context = self.context_builder.build(question, [])
+            grounded = GroundingResult(rewrite.clarification, 'clarification_required', [], 0, 0, 'ambiguous_reference')
         else:
-            grounded = insufficient_result("no_eligible_sources")
+            context = self._context(rewrite.query, top_k)
+            if history:
+                context = self.context_builder.build(rewrite.query, context.sources, history=history, original_question=question)
+            if context.sources:
+                payload = self.llm.generate(context.messages, max_output_tokens=self.max_output_tokens, response_schema=RESPONSE_SCHEMA)
+                grounded = validate_claims(payload, context)
+            else:
+                grounded = insufficient_result("no_eligible_sources")
+        model_called = bool(rewrite.messages or context.sources)
         elapsed_ms = round((perf_counter() - started) * 1000, 2)
         with self.session_factory() as session:
             repository = ConversationRepository(session)
@@ -106,11 +127,16 @@ class RAGService:
                 conversation = repository.create(actor.user_id, question)
             stamp = datetime.now(UTC).replace(tzinfo=None)
             question_message = repository.add_message(conversation.id, "user", question, created_at=stamp)
-            metadata = {"prompt_version": PROMPT_VERSION,
+            metadata = {"answer_status": grounded.status, "retrieval_query": rewrite.query or None,
+                        "rewrite_version": REWRITE_VERSION if history else None,
+                        "history_message_ids": [item['message_id'] for item in history],
+                        "answer_history_message_ids": [item['message_id'] for item in json.loads(context.messages[-1]['content']).get('current_chat_history', [])],
+                        "rewrite_prompt_sha256": hashlib.sha256(serialize_messages(rewrite.messages).encode('utf-8')).hexdigest() if rewrite.messages else None,
+                        "prompt_version": PROMPT_VERSION,
                         "prompt_sha256": hashlib.sha256(serialize_messages(context.messages).encode("utf-8")).hexdigest(),
                         "context_bytes": context.context_bytes, "context_tokens": None,
                         "context_byte_budget": self.context_builder.max_context_bytes,
-                        "max_output_tokens": self.max_output_tokens, "retrieval_top_k": top_k,
+                        "max_output_tokens": self.max_output_tokens, "retrieval_top_k": top_k, "retrieval_mode": os.getenv("RETRIEVAL_MODE", "vector"),
                         "token_count_method": "utf8_bytes", "answer_mode": "verified_source_quotes",
                         "citations": grounded.citations,
                         "grounding": {"validated_quotes": grounded.validated_quotes,
@@ -121,7 +147,7 @@ class RAGService:
                 created_at=stamp + timedelta(microseconds=1),
                 model_name=getattr(self.llm, "model_name", None) if model_called else None,
                 response_time_ms=round(elapsed_ms), top_k_used=top_k,
-                insufficient_context=grounded.status != "answered", generation_metadata=metadata)
+                insufficient_context=None if grounded.status == "clarification_required" else grounded.status != "answered", generation_metadata=metadata)
             repository.record_context(message.message_id, sources)
             response_id, result_conversation_id = str(message.message_id), str(conversation.id)
             session.commit()

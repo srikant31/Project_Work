@@ -23,3 +23,7 @@ export function formatDate(value: string | null | undefined) {
   const date = new Date(value.endsWith('Z') || /[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+
+export function ReadFailure({ title, onRetry }: { title: string; onRetry: () => void }) {
+  return <div className="empty-state" role="status"><h3>{title}</h3><p>Your records could not be loaded. This does not mean there are no records.</p><button type="button" className="button secondary" onClick={onRetry}>Try again</button></div>;
+}

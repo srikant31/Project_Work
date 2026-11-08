@@ -1,8 +1,8 @@
 """Conversation/message persistence and evidence checks; callers own commits."""
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
-from backend.database.models import Conversation, Document, DocumentChunk, Message, RetrievedContext
+from backend.database.models import Conversation, Document, DocumentChunk, Feedback, Message, RetrievedContext
 
 
 class ConversationRepository:
@@ -60,8 +60,24 @@ class ConversationRepository:
         return {str(row.doc_id): {"text": row.extracted_text, "source_hash": row.source_hash, "version": row.version}
                 for row in rows if row.extracted_text is not None and row.source_hash is not None}
 
-    def list_for_user(self, user_id, limit=50):
-        return self.session.query(Conversation).filter_by(user_id=user_id).order_by(Conversation.started_at.desc()).limit(limit).all()
+    def list_for_user(self, user_id, limit=50, offset=0):
+        return self.session.query(Conversation).filter_by(user_id=user_id).order_by(
+            Conversation.started_at.desc(), Conversation.id.desc()).offset(offset).limit(limit).all()
+
+    def count_for_user(self, user_id):
+        return self.session.scalar(select(func.count()).select_from(Conversation).where(Conversation.user_id == user_id))
+
+    def ratings(self, conversation_id, user_id):
+        return {str(row.message_id): row.rating for row in self.session.scalars(select(Feedback).join(
+            Message, Message.message_id == Feedback.message_id).where(
+                Message.conversation_id == conversation_id, Feedback.user_id == user_id))}
 
     def messages(self, conversation_id):
         return self.session.query(Message).filter_by(conversation_id=conversation_id).order_by(Message.created_at, Message.message_id).all()
+
+    def recent_owned_messages(self, conversation_id, user_id):
+        # Both ownership and chat identity are part of this query, never just user.
+        return list(reversed(self.session.scalars(select(Message).join(
+            Conversation, Conversation.id == Message.conversation_id).where(
+                Conversation.id == conversation_id, Conversation.user_id == user_id).order_by(
+                    Message.created_at.desc(), Message.message_id.desc()).limit(6)).all()))

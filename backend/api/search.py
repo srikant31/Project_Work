@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Depends, Request
 
 from backend.api.dependencies import current_user
@@ -8,8 +10,9 @@ router = APIRouter(tags=["Retrieval"])
 
 
 @router.post("/search")
-def search(payload: SearchRequest, request: Request, actor=Depends(current_user)):
+def search(payload: SearchRequest, request: Request, mode: str | None = None, actor=Depends(current_user)):
+    keyword_only = (mode or os.getenv("RETRIEVAL_MODE", "vector")) == "bm25"
     service = SearchService(session_factory=request.app.state.session_factory,
-                            embedder=request.app.state.resources.get_embedder(),
-                            retriever=request.app.state.resources.get_retriever())
-    return service.search(payload.question, payload.top_k)
+                            embedder=None if keyword_only else request.app.state.resources.get_embedder(),
+                            retriever=None if keyword_only else request.app.state.resources.get_retriever())
+    return service.search(payload.question, payload.top_k, mode=mode)

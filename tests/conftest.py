@@ -5,6 +5,16 @@ import uuid
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def disable_external_generation(monkeypatch):
+    """A configured local account must never turn regression tests into API calls."""
+    monkeypatch.setenv('LLM_PROVIDER', 'disabled')
+    monkeypatch.setenv('RETRIEVAL_MODE', 'vector')
+    monkeypatch.delenv('LLM_API_KEY_FILE', raising=False)
+    monkeypatch.setenv('DOCLING_PDF_MODE', 'off')
+    monkeypatch.setenv('PDF_TEXT_EXTRACTOR', 'pypdf')
+
+
 def pytest_addoption(parser):
     parser.addoption("--run-integration", action="store_true", default=False)
 

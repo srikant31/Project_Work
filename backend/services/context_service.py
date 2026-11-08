@@ -32,21 +32,27 @@ class ContextBuilder:
         self.max_context_bytes, self.max_sources, self.min_similarity = max_context_bytes, max_sources, min_similarity
 
     @staticmethod
-    def _messages(question, sources):
+    def _messages(question, sources, history=None, original_question=None):
         data = {"question": question, "evidence": [
             {"source_id": source["source_id"], "document": source.get("doc_name"),
              "version": source.get("version"), "page_number": source.get("page_number"),
              "section_heading": source.get("section_heading"), "text": source["text"]}
             for source in sources
         ]}
+        if history:
+            data['current_chat_history'] = history
+            data['original_question'] = original_question or question
         return [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(data, ensure_ascii=False, separators=(",", ":"))}]
 
-    def build(self, question, hits):
+    def build(self, question, hits, history=None, original_question=None):
         if not isinstance(question, str) or not question.strip() or len(question) > 4000:
             raise ValueError("Enter a question of 1 to 4000 characters")
         question = question.strip()
-        if len(serialize_messages(self._messages(question, [])).encode("utf-8")) > self.max_context_bytes:
+        history = list(history or [])
+        while history and len(serialize_messages(self._messages(question, [], history, original_question)).encode('utf-8')) > self.max_context_bytes:
+            history.pop(0)
+        if len(serialize_messages(self._messages(question, [], history, original_question)).encode("utf-8")) > self.max_context_bytes:
             raise ValueError("The question and prompt exceed the configured context byte budget")
         sources, seen = [], set()
         for hit in hits:
@@ -61,10 +67,10 @@ class ContextBuilder:
             if self.min_similarity is not None and (score is None or score < self.min_similarity):
                 continue
             candidate = {**hit, "source_id": f"S{len(sources) + 1}"}
-            messages = self._messages(question, [*sources, candidate])
+            messages = self._messages(question, [*sources, candidate], history, original_question)
             if len(serialize_messages(messages).encode("utf-8")) > self.max_context_bytes:
                 continue  # Keep complete immutable chunks; never truncate a condition.
             sources.append(candidate)
             seen.add(chunk_id)
-        messages = self._messages(question, sources)
+        messages = self._messages(question, sources, history, original_question)
         return BuiltContext(sources, messages, len(serialize_messages(messages).encode("utf-8")), len(hits) - len(sources))

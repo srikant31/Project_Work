@@ -22,6 +22,8 @@ def normalize_email(email: str) -> str:
     if not isinstance(email, str):
         raise ValueError("A valid email address is required")
     normalized = email.strip().lower()
+    if re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*@helpdesk", normalized):
+        return normalized
     if len(normalized) > 255 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
         raise ValueError("A valid email address is required")
     return normalized

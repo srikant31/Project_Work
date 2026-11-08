@@ -1,4 +1,12 @@
 export interface User { user_id: string; email: string; role: 'admin' | 'employee'; department?: string | null }
+export interface ConversationSummary { conversation_id: string; title: string | null; started_at: string | null }
+export interface HistoryMessage {
+  message_id: string; role: 'user' | 'assistant'; content: string; created_at: string | null;
+  feedback_comment?: string | null; reply_to_message_id: string | null; rating: 'up' | 'down' | null; insufficient_context: boolean | null;
+  generation: { prompt_version?: string; answer_mode?: string; answer_status?: string; citations?: Partial<Citation>[] } | null;
+}
+export interface ConversationHistory { conversation_id: string; title: string | null; messages: HistoryMessage[] }
+export interface ConversationsResult { conversations: ConversationSummary[]; total: number; limit: number; offset: number }
 export interface Category { category_id: string; category_name: string }
 export interface ManagedCategory extends Category { description: string | null; document_count: number }
 export interface DateRange { date_from?: string; date_to?: string }
@@ -15,7 +23,7 @@ export interface AnalyticsResult {
     total_questions: number; questions_today: number; questions_this_week: number; total_responses: number;
     positive_feedback: number; negative_feedback: number; unrated_responses: number;
     average_response_time_ms: number | null; timed_response_count: number; unsupported_responses: number;
-    no_useful_retrieval_responses: number; unknown_outcome_responses: number;
+    no_useful_retrieval_responses: number; unknown_outcome_responses: number; clarification_responses: number;
   };
   daily_activity: { date: string; questions: number; responses: number; positive_feedback: number; negative_feedback: number }[];
   frequent_questions: { question: string; count: number }[];
@@ -41,7 +49,7 @@ export interface DocumentDetail {
 }
 export interface Evidence {
   rank: number; chunk_id: string; text: string; doc_id: string; doc_name: string;
-  version: number; source_hash: string | null; similarity_score: number;
+  version: number; source_hash: string | null; similarity_score: number | null; bm25_score?: number | null; fusion_score?: number | null; retrieval_mode?: string;
   page_number: number | null; section_heading: string | null;
   start_char: number | null; end_char: number | null;
 }
@@ -54,7 +62,7 @@ export interface UploadResult { document: KnowledgeDocument; skipped: boolean; c
 export interface RagConfig {
   provider: string | null; model: string | null; configured: boolean; prompt_version: string;
   context_token_budget: number | null; context_byte_budget?: number; max_output_tokens: number;
-  token_count_method?: string;
+  retrieval_mode?: string; token_count_method?: string;
 }
 export interface Citation {
   source_id: string; doc_id: string; doc_name: string; version: number; chunk_id: string;
@@ -63,7 +71,7 @@ export interface Citation {
 }
 export interface ChatResponse {
   response_id: string; conversation_id: string; answer: string;
-  status: 'answered' | 'insufficient_evidence'; citations: Citation[];
+  status: 'answered' | 'insufficient_evidence' | 'clarification_required'; citations: Citation[];
   elapsed_ms: number; model: string; prompt_version: string;
   context_tokens: number | null; context_bytes?: number; token_count_method?: string;
   grounding: { validated_quotes: number | unknown[]; rejected_claims: number | unknown[] };
@@ -114,7 +122,7 @@ export interface AdminReview {
   question: ReviewQuestion | null; answer: ReviewAnswer | null;
   linkage: 'explicit' | 'legacy_unlinked' | 'question_without_response';
   status: Exclude<ReviewStatusFilter, 'all'>;
-  feedback: { rating: 'up' | 'down' | null; created_at: string | null; updated_at: string | null } | null;
+  feedback: { comment?: string | null; rating: 'up' | 'down' | null; created_at: string | null; updated_at: string | null } | null;
   citations: Partial<Citation>[]; categories: string[];
 }
 export interface ReviewContext {

@@ -120,6 +120,22 @@ def test_analytics_is_admin_only(analytics_fixture, who, expected):
     assert analytics_fixture.client.get("/api/analytics").status_code == expected
 
 
+def test_clarifications_are_separate_from_unknown_outcomes(analytics_fixture):
+    from backend.database.models import Message
+    login(analytics_fixture)
+    before = report(analytics_fixture)['summary']
+    with analytics_fixture.factory() as session:
+        existing = session.get(Message, analytics_fixture.ids['old-answer'])
+        session.add(Message(conversation_id=existing.conversation_id,message_provider='assistant',
+            content='Which employee type?', insufficient_context=None,
+            generation_metadata={'answer_status':'clarification_required'}))
+        session.commit()
+    after = report(analytics_fixture)['summary']
+    assert after['clarification_responses'] == before['clarification_responses'] + 1
+    assert after['unknown_outcome_responses'] == before['unknown_outcome_responses']
+    assert after['unsupported_responses'] == before['unsupported_responses']
+
+
 def test_cohorts_current_owner_votes_and_unknowns(analytics_fixture):
     login(analytics_fixture)
     data = report(analytics_fixture, date_from="2026-10-22", date_to="2026-10-23")
@@ -128,7 +144,7 @@ def test_cohorts_current_owner_votes_and_unknowns(analytics_fixture):
         "total_responses": 5, "positive_feedback": 1, "negative_feedback": 2,
         "unrated_responses": 2, "average_response_time_ms": pytest.approx(400 / 3),
         "timed_response_count": 3, "unsupported_responses": 2,
-        "no_useful_retrieval_responses": 1, "unknown_outcome_responses": 1,
+        "no_useful_retrieval_responses": 1, "unknown_outcome_responses": 1, "clarification_responses": 0,
     }
     # The votes were submitted outside this date range; current ratings still
     # belong to their response cohort. The non-owner up vote is not counted.

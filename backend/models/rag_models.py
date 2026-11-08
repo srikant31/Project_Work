@@ -13,3 +13,4 @@ class ChatRequest(SearchRequest):
 class FeedbackRequest(RequestModel):
     response_id: UUID
     rating: Literal["up", "down"]
+    comment: str | None = Field(default=None, max_length=600)

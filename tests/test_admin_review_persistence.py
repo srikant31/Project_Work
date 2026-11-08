@@ -76,7 +76,7 @@ def test_new_vote_and_change_have_utc_times_and_preserve_first_submission(db_fac
         assert session.get(Message, votes[0].message_id).content == "Exact saved answer"
 
 
-def test_updating_legacy_vote_preserves_unknown_creation_and_historical_comment(db_factory, saved_turn, monkeypatch):
+def test_updating_legacy_vote_preserves_unknown_creation_and_replaces_current_comment(db_factory, saved_turn, monkeypatch):
     from backend.database.models import Feedback
     from backend.repositories.feedback_repository import FeedbackRepository
 
@@ -92,7 +92,7 @@ def test_updating_legacy_vote_preserves_unknown_creation_and_historical_comment(
     with db_factory() as session:
         vote = session.get(Feedback, (saved_turn.answer_id, saved_turn.user_id))
         assert vote.rating == "down" and vote.created_at is None and vote.updated_at == now
-        assert vote.comment == "Historical text remains historical"
+        assert vote.comment is None  # A new vote without a reason replaces the previous explanation.
 
 
 @pytest.mark.parametrize("case", ["different_conversation", "assistant_target", "missing_target", "user_reply"])
@@ -131,6 +131,9 @@ def test_rag_records_exact_link_for_each_turn_without_ordering_inference(db_fact
         model_name = None
 
         def generate(self, *args, **kwargs):
+            if 'query' in kwargs['response_schema'].get('properties', {}):
+                import json
+                return {'query': json.loads(args[0][-1]['content'])['question'], 'needs_clarification': False, 'clarification': ''}
             raise AssertionError("No evidence means there must be no model call")
 
     with db_factory() as session:

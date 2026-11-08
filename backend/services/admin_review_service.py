@@ -35,11 +35,15 @@ def safe_metadata(value):
         return None
     keys = {"prompt_version", "prompt_sha256", "context_bytes", "context_tokens",
             "context_byte_budget", "max_output_tokens", "retrieval_top_k",
-            "token_count_method", "answer_mode", "model_called", "provider"}
+            "token_count_method", "answer_mode", "model_called", "provider",
+            "answer_status", "retrieval_mode", "retrieval_query", "rewrite_version", "rewrite_prompt_sha256"}
     result = {key: item for key, item in value.items()
               if key in keys and (item is None or isinstance(item, (str, int, float, bool)))}
     if "citations" in value:
         result["citations"] = safe_citations(value["citations"])
+    for key in ('history_message_ids', 'answer_history_message_ids'):
+        if isinstance(value.get(key), list):
+            result[key] = [item for item in value[key][:6] if isinstance(item, str)]
     grounding = value.get("grounding")
     if isinstance(grounding, dict):
         result["grounding"] = {key: item for key, item in grounding.items()
@@ -87,7 +91,7 @@ class AdminReviewService:
                 "insufficient_context": answer.insufficient_context,
                 "generation_metadata": metadata} if answer else None,
             "linkage": linkage, "status": status,
-            "feedback": {"rating": feedback.rating, "created_at": utc(feedback.created_at),
+            "feedback": {"rating": feedback.rating, "comment": feedback.comment, "created_at": utc(feedback.created_at),
                 "updated_at": utc(feedback.updated_at)} if feedback else None,
             "citations": citations if isinstance(citations, list) else [],
             "categories": categories.get(answer.message_id, []) if answer else []}

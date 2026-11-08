@@ -1,0 +1,4 @@
+# Install into the separate .venv-docling runtime, not the main application venv.
+docling==2.147.0
+rapidocr==3.10.0
+onnxruntime==1.29.0

@@ -35,7 +35,8 @@ class AnalyticsRepository:
                        Message.response_time_ms.label("latency"),
                        Message.insufficient_context.label("insufficient_context"),
                        Feedback.rating.label("rating"),
-                       AnalyticsRepository._reason().label("reason"))
+                       AnalyticsRepository._reason().label("reason"),
+                       cast(Message.generation_metadata, JSONB)["answer_status"].as_string().label("answer_status"))
                 .select_from(Message)
                 .join(Conversation, Conversation.id == Message.conversation_id)
                 .outerjoin(Feedback, and_(Feedback.message_id == Message.message_id,
@@ -58,7 +59,8 @@ class AnalyticsRepository:
             count_if(valid_time).label("timed_response_count"),
             count_if(cohort.c.insufficient_context.is_(True)).label("unsupported_responses"),
             count_if(cohort.c.reason == "no_eligible_sources").label("no_useful_retrieval_responses"),
-            count_if(cohort.c.insufficient_context.is_(None)).label("unknown_outcome_responses"))
+            count_if(cohort.c.answer_status == "clarification_required").label("clarification_responses"),
+            count_if(and_(cohort.c.insufficient_context.is_(None), func.coalesce(cohort.c.answer_status, "") != "clarification_required")).label("unknown_outcome_responses"))
         return dict(self.session.execute(query).one()._mapping)
 
     def daily(self, lower, upper):

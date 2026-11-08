@@ -5,6 +5,7 @@ contacts an LLM API. Live provider/model quality remains a separate milestone.
 """
 
 import copy
+import json
 import uuid
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -31,6 +32,8 @@ class TestProvider:
 
     def generate(self, messages, *, max_output_tokens, response_schema):
         self.calls.append(copy.deepcopy(messages))
+        if 'query' in response_schema.get('properties', {}):
+            return {'query': json.loads(messages[-1]['content'])['question'], 'needs_clarification': False, 'clarification': ''}
         if self.error is not None:
             raise self.error
         return copy.deepcopy(self.payload)
@@ -98,6 +101,111 @@ def chat(api, *, conversation_id=None, client=None):
     if conversation_id is not None:
         payload["conversation_id"] = conversation_id
     return (api.client if client is None else client).post("/api/chat", json=payload)
+
+
+def memory_provider(api, monkeypatch, decision):
+    calls = []
+    def generate(messages, *, max_output_tokens, response_schema):
+        rewrite = 'query' in response_schema.get('properties', {})
+        calls.append(('rewrite' if rewrite else 'answer', json.loads(messages[-1]['content'])))
+        return copy.deepcopy(decision if rewrite else api.provider.payload)
+    monkeypatch.setattr(api.provider, 'generate', generate)
+    return calls
+
+
+def test_memory_uses_only_current_owned_chat_and_new_chat_has_none(rag_api, monkeypatch):
+    from backend.database.models import Message
+    first = answered(rag_api)
+    secret = 'PRIVATE_OTHER_CHAT_NEVER_INCLUDE'
+    other = rag_api.client.post('/api/chat', json={'question': secret, 'top_k':3}).json()
+    calls = memory_provider(rag_api, monkeypatch, {'query':'Is SMS verification accepted for remote access?', 'needs_clarification':False, 'clarification':''})
+    followup = 'Is that method accepted?'
+    result = rag_api.client.post('/api/chat', json={'question':followup, 'top_k':3, 'conversation_id':first['conversation_id']})
+    assert result.status_code == 200, result.text
+    assert [kind for kind, _ in calls] == ['rewrite', 'answer']
+    assert secret not in json.dumps(calls)
+    assert len(calls[0][1]['current_chat_history']) == 2
+    assert calls[1][1]['question'] == 'Is SMS verification accepted for remote access?'
+    assert calls[1][1]['original_question'] == followup
+    assert calls[1][1]['current_chat_history'] == calls[0][1]['current_chat_history']
+    with rag_api.factory() as session:
+        answer = session.get(Message, uuid.UUID(result.json()['response_id']))
+        question = session.get(Message, answer.reply_to_message_id)
+        assert question.content == followup
+        meta = answer.generation_metadata
+        assert all(str(session.get(Message, uuid.UUID(i)).conversation_id) == first['conversation_id'] for i in meta['history_message_ids'])
+        assert str(other['conversation_id']) not in json.dumps(meta)
+    calls.clear()
+    assert chat(rag_api).status_code == 200
+    assert [kind for kind,_ in calls] == ['answer']
+    assert 'current_chat_history' not in calls[0][1]
+    calls.clear(); login(rag_api, 'other')
+    assert chat(rag_api, conversation_id=first['conversation_id']).status_code == 403
+    assert calls == []
+
+
+def test_ambiguous_reference_is_saved_clarification_without_retrieval(rag_api, monkeypatch):
+    from backend.database.models import Message
+    from backend.services.search_service import SearchService
+    original_search = SearchService.search
+    first = answered(rag_api)
+    calls = memory_provider(rag_api, monkeypatch, {'query':'', 'needs_clarification':True, 'clarification':'Invented entitlement: 999 days?'})
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Clarification must not search')
+    monkeypatch.setattr(SearchService, 'search', forbidden)
+    response = rag_api.client.post('/api/chat', json={'question':'How many does he get?', 'conversation_id':first['conversation_id']})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['status'] == 'clarification_required' and result['citations'] == []
+    assert '999' not in result['answer']
+    assert [kind for kind,_ in calls] == ['rewrite']
+    with rag_api.factory() as session:
+        row = session.get(Message, uuid.UUID(result['response_id']))
+        assert row.insufficient_context is None
+        assert row.generation_metadata['answer_status'] == 'clarification_required'
+    history = rag_api.client.get('/api/conversations/'+first['conversation_id']).json()
+    assert history['messages'][-1]['content'] == result['answer']
+    monkeypatch.setattr(SearchService, 'search', original_search)
+    calls = memory_provider(rag_api, monkeypatch, {'query':'Is SMS verification accepted for remote access?', 'needs_clarification':False, 'clarification':''})
+    followup = rag_api.client.post('/api/chat', json={'question':'By that method I mean SMS verification. Is it accepted?', 'conversation_id':first['conversation_id']})
+    assert followup.status_code == 200 and followup.json()['status'] == 'answered'
+    assert any(item['content'] == result['answer'] for item in calls[0][1]['current_chat_history'])
+
+
+def test_recent_history_is_bounded_and_oversized_latest_turn_requests_restatement(rag_api, monkeypatch):
+    from backend.database.models import Message
+    from datetime import datetime, timedelta
+    first = answered(rag_api)
+    with rag_api.factory() as session:
+        for n in range(8):
+            session.add(Message(conversation_id=uuid.UUID(first['conversation_id']), message_provider='user',
+                content=f'RECENT-{n}', created_at=datetime(2030,1,1)+timedelta(seconds=n)))
+        session.commit()
+    calls = memory_provider(rag_api, monkeypatch, {'query':'SMS verification?', 'needs_clarification':False, 'clarification':''})
+    assert chat(rag_api, conversation_id=first['conversation_id']).status_code == 200
+    history = calls[0][1]['current_chat_history']
+    assert [item['content'] for item in history] == [f'RECENT-{n}' for n in range(2,8)]
+    assert len(json.dumps(history,ensure_ascii=False,separators=(',',':')).encode()) <= 6000
+    with rag_api.factory() as session:
+        session.add(Message(conversation_id=uuid.UUID(first['conversation_id']),message_provider='user',content='ç•Œ'*3000,created_at=datetime(2031,1,1)))
+        session.commit()
+    calls.clear()
+    result = chat(rag_api, conversation_id=first['conversation_id'])
+    assert result.status_code == 200 and result.json()['status'] == 'clarification_required'
+    assert calls == []
+
+
+@pytest.mark.parametrize('decision', [None, {'query':'invented'}, {'query':'','needs_clarification':False,'clarification':''}])
+def test_invalid_rewrite_never_saves_a_turn(rag_api, monkeypatch, decision):
+    from backend.database.models import Message
+    first = answered(rag_api)
+    calls = memory_provider(rag_api, monkeypatch, decision)
+    with rag_api.factory() as session:
+        before = session.query(Message).count()
+    assert chat(rag_api, conversation_id=first['conversation_id']).status_code == 502
+    assert [kind for kind,_ in calls] == ['rewrite']
+    with rag_api.factory() as session:
+        assert session.query(Message).count() == before
 
 
 def answered(api):
@@ -278,7 +386,7 @@ def test_feedback_cannot_be_submitted_for_someone_elses_response(rag_api, other)
         assert session.query(Feedback).count() == 0
 
 
-@pytest.mark.parametrize("extra", [{"comment": "Do not store this free text"}, {"comments": "No free-text comments"}])
+@pytest.mark.parametrize("extra", [{"comment": "x" * 601}, {"comments": "Unknown field"}])
 def test_feedback_comment_fields_are_rejected_by_strict_schema(rag_api, extra):
     result = answered(rag_api)
     response = rag_api.client.post("/api/feedback", json={"response_id": result["response_id"], "rating": "up", **extra})

@@ -238,7 +238,7 @@ def test_pdf_loader_retains_original_file_hash_and_byte_size(tmp_path):
 
 
 def test_fixture_corpus_extracts_without_modification():
-    corpus = Path(__file__).resolve().parents[1] / "data" / "documents"
+    corpus = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "documents"
     expected = {"sample_password_policy.txt": "txt", "sample_vpn_guide.md": "md", "sample_equipment_manual.pdf": "pdf", "sample_network_faq.docx": "docx"}
     for name, kind in expected.items():
         loaded = load_document(corpus / name)

@@ -28,10 +28,10 @@ def ingest(service, text="VPN access requires a company laptop and MFA.", **kwar
 
 
 def test_file_provenance_idempotency_and_configuration(service, db_factory):
-    first = service.process_file("data/documents/sample_password_policy.txt", category_name="IT Support")
-    repeat = service.process_file("data/documents/sample_password_policy.txt", category_name="IT Support")
+    first = service.process_file("tests/fixtures/documents/sample_password_policy.txt", category_name="IT Support")
+    repeat = service.process_file("tests/fixtures/documents/sample_password_policy.txt", category_name="IT Support")
     assert repeat["skipped"] and repeat["doc_id"] == first["doc_id"]
-    changed_config = service.process_file("data/documents/sample_password_policy.txt", category_name="IT Support", chunk_size=150, overlap=25)
+    changed_config = service.process_file("tests/fixtures/documents/sample_password_policy.txt", category_name="IT Support", chunk_size=150, overlap=25)
     assert changed_config["version"] == 2 and not changed_config["skipped"]
     with db_factory() as session:
         old = session.get(Document, uuid.UUID(first["doc_id"]))
@@ -221,7 +221,7 @@ def test_nonfinite_or_wrong_dimension_embeddings_cannot_publish(service, db_fact
 def test_invalid_file_does_not_touch_document_history(service, db_factory):
     ingest(service)
     with pytest.raises(ValueError):
-        service.process_file("data/documents/sample_unsupported.xyz", category_name="IT Support")
+        service.process_file("tests/fixtures/documents/sample_unsupported.xyz", category_name="IT Support")
     with db_factory() as session:
         assert session.query(Document).count() == 1
 
@@ -262,7 +262,7 @@ def test_file_default_identity_distinguishes_same_basename(service, tmp_path):
 @pytest.mark.parametrize("filename", ["sample_password_policy.txt", "sample_vpn_guide.md", "sample_equipment_manual.pdf", "sample_network_faq.docx"])
 def test_each_supported_file_real_store_round_trip(service, db_factory, filename):
     from scripts.verify_stores import audit_stores
-    result = service.process_file("data/documents/" + filename, category_name="IT Support")
+    result = service.process_file("tests/fixtures/documents/" + filename, category_name="IT Support")
     assert result["chunk_count"] > 0
     hits = service.search("What does this policy say about support?", top_k=2)
     assert hits and all(h["doc_id"] == result["doc_id"] for h in hits)

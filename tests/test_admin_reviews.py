@@ -102,7 +102,7 @@ def dashboard(db_factory, tmp_path):
                                      rank=1, similarity_score=0.81))
         feedback_time = stamp.replace(tzinfo=UTC) + timedelta(hours=1)
         session.add(Feedback(message_id=answer.message_id, user_id=ids["owner"], rating="down",
-                             comment="Historical comment must not be returned",
+                             comment="Missing details: Explain MFA.",
                              created_at=feedback_time, updated_at=feedback_time + timedelta(minutes=5)))
         session.add(Feedback(message_id=ids["payroll-answer"], user_id=ids["owner"], rating="up"))
         # A historical non-owner vote must not impersonate the owner's rating.
@@ -179,6 +179,7 @@ def test_exact_question_answer_owner_vote_citations_and_context(dashboard):
     assert row["answer"]["content"] == "VPN requires MFA. [S1]"
     assert row["linkage"] == "explicit" and row["status"] == "answered"
     assert row["feedback"]["rating"] == "down"
+    assert row["feedback"]["comment"] == "Missing details: Explain MFA."
     assert row["feedback"]["created_at"] == "2026-10-23T11:00:00+00:00"
     assert row["feedback"]["updated_at"] == "2026-10-23T11:05:00+00:00"
     assert row["citations"] == [dashboard.citation]
@@ -188,7 +189,7 @@ def test_exact_question_answer_owner_vote_citations_and_context(dashboard):
     assert context["text"] == "VPN requires MFA." and context["similarity_score"] == pytest.approx(0.81)
     assert context["rank"] == 1 and context["version"] == 2 and context["page_number"] == 3
     assert context["status"] == "deactivated" and context["is_online"] is False
-    for secret in ("password_hash", "token_hash", "doc_path", "comment", dashboard.password_hash,
+    for secret in ("password_hash", "token_hash", "doc_path", dashboard.password_hash,
                    "api_key", "sessiontoken", "hidden-citation-secret", "hidden-top-level-secret",
                    "hidden-nested-secret", "hidden-grounding-secret"):
         assert secret not in response.text

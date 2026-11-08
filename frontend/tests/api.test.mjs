@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
-import { ApiError, api, request } from '../src/api.ts';
+import { ApiError, api, request, requestTimeoutMs } from '../src/api.ts';
+
+test('employee history uses owned paginated endpoints and encodes selected identity', async () => {
+  const calls = [];
+  globalThis.fetch = async url => { calls.push(url); return Response.json({ conversations: [], total: 0 }); };
+  await api.conversations(20, 40);
+  await api.conversation('conversation/id');
+  assert.deepEqual(calls, ['/api/conversations?limit=20&offset=40', '/api/conversations/conversation%2Fid']);
+});
 
 const originalFetch = globalThis.fetch;
 const originalWindow = globalThis.window;
@@ -229,5 +237,90 @@ test('category maintenance sends exact editable fields and handles no-content de
 test('a category reference conflict remains visible instead of being treated as success', async () => {
   globalThis.fetch = async () => Response.json({ detail: 'Category is referenced by stored document versions.' }, { status: 409 });
   await assert.rejects(api.deleteCategory('used-id'), error => error instanceof ApiError && error.status === 409 && error.message.includes('referenced'));
+  assert.deepEqual(events, []);
+});
+
+
+test('negative feedback sends the explanation with its exact response', async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/feedback');
+    assert.deepEqual(JSON.parse(options.body), { response_id: 'response-id', rating: 'down', comment: 'Missing important details: Please explain.' });
+    return Response.json({ rating: 'down', comment: 'Missing important details: Please explain.' });
+  };
+  await api.feedback('response-id', 'down', 'Missing important details: Please explain.');
+});
+test('saved evidence and search mode use encoded API paths', async () => {
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(url); return Response.json({}); };
+  await api.evidence('response/id', 'chunk/id');
+  await api.search('VPN-809', 3, 'hybrid');
+  assert.deepEqual(calls, ['/api/responses/response%2Fid/evidence/chunk%2Fid', '/api/search?mode=hybrid']);
+});
+
+
+test('request deadlines allow indexing and chat longer than ordinary reads', () => {
+  assert.equal(requestTimeoutMs('/conversations?limit=20'), 30000);
+  assert.equal(requestTimeoutMs('/chat'), 180000);
+  assert.equal(requestTimeoutMs('/search?mode=hybrid'), 120000);
+  assert.equal(requestTimeoutMs('/documents/upload'), 900000);
+  assert.equal(requestTimeoutMs('/documents/id/replace'), 900000);
+  assert.equal(requestTimeoutMs('/documents/id/reindex'), 900000);
+  assert.equal(requestTimeoutMs('/experiments/run'), 600000);
+});
+test('a stalled fetch times out and aborts without expiring the session', async () => {
+  let signal;
+  globalThis.fetch = (_url, options) => { signal = options.signal; return new Promise(() => {}); };
+  await assert.rejects(request('/conversations', { timeoutMs: 10 }), error => error.status === 408 && error.message.includes('try again'));
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(events, []);
+});
+test('deadline also covers stalled JSON body after HTTP success', async () => {
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: () => new Promise(() => {}) });
+  await assert.rejects(request('/analytics', { timeoutMs: 10 }), error => error.status === 408);
+});
+test('a stalled error body also has a deadline', async () => {
+  globalThis.fetch = async () => ({ ok: false, status: 503, json: () => new Promise(() => {}) });
+  await assert.rejects(request('/analytics', { timeoutMs: 10 }), error => error.status === 408);
+});
+test('timed-out writes warn about uncertain completion and are not retried', async () => {
+  let calls = 0;
+  globalThis.fetch = () => { calls++; return new Promise(() => {}); };
+  await assert.rejects(request('/chat', { method: 'POST', timeoutMs: 10 }), error => error.status === 408 && error.message.includes('may still finish') && error.message.includes('before submitting again'));
+  assert.equal(calls, 1);
+});
+test('caller cancellation aborts an in-flight request distinctly from timeout', async () => {
+  let signal;
+  globalThis.fetch = (_url, options) => { signal = options.signal; return new Promise(() => {}); };
+  const controller = new AbortController();
+  const result = request('/conversations', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(result, error => error.status === 0 && error.message === 'Request cancelled.');
+  assert.equal(signal.aborted, true);
+});
+test('already-cancelled requests do not contact the server', async () => {
+  let calls = 0;
+  globalThis.fetch = () => { calls++; return Response.json({}); };
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(request('/profile', { signal: controller.signal }), /Request cancelled/);
+  assert.equal(calls, 0);
+});
+test('completed requests clear their deadline and caller listeners', async () => {
+  let signal; let added = 0; let removed = 0;
+  const controller = new AbortController();
+  const add = controller.signal.addEventListener.bind(controller.signal);
+  const remove = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.addEventListener = (...args) => { added++; return add(...args); };
+  controller.signal.removeEventListener = (...args) => { removed++; return remove(...args); };
+  globalThis.fetch = async (_url, options) => { signal = options.signal; return Response.json({ saved: true }); };
+  assert.deepEqual(await request('/profile', { timeoutMs: 20, signal: controller.signal }), { saved: true });
+  await new Promise(resolve => setTimeout(resolve, 30)); controller.abort();
+  assert.equal(signal.aborted, false);
+  assert.equal(added, 1); assert.equal(removed, 1);
+});
+
+test('a timeout during a 401 response body does not expire the user session', async () => {
+  globalThis.fetch = async (_url, options) => ({ ok: false, status: 401, json: () => new Promise((_, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })) });
+  await assert.rejects(request('/conversations', { timeoutMs: 10 }), error => error.status === 408);
+  await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(events, []);
 });

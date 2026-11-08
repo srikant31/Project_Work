@@ -24,11 +24,11 @@ class FeedbackRepository:
             return str(question.message_id)
         return None
 
-    def set_rating(self, message_id, user_id, rating):
+    def set_rating(self, message_id, user_id, rating, comment=None):
         stamp = datetime.now(UTC)
         statement = insert(Feedback).values(message_id=message_id, user_id=user_id,
-            rating=rating, comment=None, created_at=stamp, updated_at=stamp)
+            rating=rating, comment=comment, created_at=stamp, updated_at=stamp)
         self.session.execute(statement.on_conflict_do_update(
             index_elements=[Feedback.message_id, Feedback.user_id],
-            set_={"rating": rating, "updated_at": stamp}))
+            set_={"rating": rating, "comment": comment, "updated_at": stamp}))
         self.session.flush()

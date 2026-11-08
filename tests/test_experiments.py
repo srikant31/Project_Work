@@ -283,7 +283,7 @@ def test_pdf_corpus_keeps_physical_blank_page_boundaries(db_factory, real_embedd
     source = source_root / "with_blank_page.pdf"
     writer = PdfWriter()
     writer.add_blank_page(width=595, height=842)
-    fixture = Path(__file__).resolve().parents[1] / "data/documents/sample_equipment_manual.pdf"
+    fixture = Path(__file__).resolve().parents[1] / "tests/fixtures/documents/sample_equipment_manual.pdf"
     reader = PdfReader(fixture)
     for page in reader.pages:
         writer.add_page(page)

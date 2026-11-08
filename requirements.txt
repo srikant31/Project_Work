@@ -107,3 +107,9 @@ yarl==1.24.5
 fastapi==0.159.1
 starlette==1.9.0
 python-multipart==0.0.32
+
+pymupdf==2.1
+pymupdf4llm==2.1
+pymupdf_layout==2.1
+psutil==7.2.2
+tabulate==0.10.0

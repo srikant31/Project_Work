@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from backend.api.dependencies import current_user
 from backend.models.api_models import SearchRequest
@@ -41,14 +41,20 @@ def chat(payload: ChatRequest, actor=Depends(current_user), service=Depends(rag_
 
 @router.post("/feedback")
 def feedback(payload: FeedbackRequest, request: Request, actor=Depends(current_user)):
-    return FeedbackService(request.app.state.session_factory).rate(payload.response_id, actor, payload.rating)
+    return FeedbackService(request.app.state.session_factory).rate(payload.response_id, actor, payload.rating, payload.comment)
 
 
 @router.get("/conversations")
-def conversations(request: Request, actor=Depends(current_user)):
-    return ConversationService(request.app.state.session_factory).list(actor)
+def conversations(request: Request, actor=Depends(current_user),
+                  limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
+    return ConversationService(request.app.state.session_factory).list(actor, limit, offset)
 
 
 @router.get("/conversations/{conversation_id}")
 def conversation(conversation_id: UUID, request: Request, actor=Depends(current_user)):
     return ConversationService(request.app.state.session_factory).get(conversation_id, actor)
+
+
+@router.get("/responses/{response_id}/evidence/{chunk_id}")
+def response_evidence(response_id: UUID, chunk_id: UUID, request: Request, actor=Depends(current_user)):
+    return ConversationService(request.app.state.session_factory).evidence(response_id, chunk_id, actor)

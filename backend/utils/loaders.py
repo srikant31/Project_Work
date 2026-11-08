@@ -1,14 +1,15 @@
 """Deterministic extraction with honest source locations.
 
 Character offsets refer to normalized source_text, never original file bytes.
-Only PDFs have physical page numbers. OCR and visual layout reconstruction
-are outside this extractor's contract.
+Only PDFs have physical page numbers. Optional local Docling processing retains
+those boundaries while reporting its separate extractor version and OCR limits.
 """
 import hashlib
 import io
 import json
 import re
 import codecs
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +58,7 @@ class LoadedDocument:
     source_text: str
     page_count: int | None
     _page_texts: list[str] = field(default_factory=list, repr=False)
+    extraction_metadata: dict = field(default_factory=dict)
 
     @property
     def pages(self) -> list[str]:
@@ -339,10 +341,70 @@ def load_document(path) -> LoadedDocument:
         loaded.warnings.extend(warnings)
         return loaded
     if doc_type == "pdf":
-        pages, warnings = _load_pdf(data, path.name)
+        parser = os.getenv('PDF_TEXT_EXTRACTOR', 'pymupdf4llm').strip().lower()
+        if parser not in {'pypdf', 'pymupdf4llm'}:
+            raise DocumentLoadError('PDF_TEXT_EXTRACTOR must be pypdf or pymupdf4llm')
+        mode = os.getenv('DOCLING_PDF_MODE', 'off').strip().lower()
+        if mode not in {'off', 'auto', 'force'}:
+            raise DocumentLoadError('DOCLING_PDF_MODE must be off, auto or force')
+        converted = None
+        route_reason = None
+        try:
+            pages, warnings = _load_pdf(data, path.name)
+        except ScannedPdfError:
+            if mode == 'off':
+                raise
+            from backend.utils.docling_bridge import extract_pdf
+            converted = extract_pdf(path)
+            route_reason = 'image_only_page'
+        if mode == 'force' and converted is None:
+            from backend.utils.docling_bridge import extract_pdf
+            converted = extract_pdf(path)
+            route_reason = 'administrator_force'
+        if converted is None and parser == 'pymupdf4llm':
+            from backend.utils.pdf_adapter import extract_pdf as layout_extract, PdfQualityError
+            try:
+                converted = layout_extract(path, pages)
+            except (PdfQualityError, RuntimeError, ValueError, ImportError, TypeError) as exc:
+                if mode == 'off':
+                    raise DocumentLoadError('PDF layout extraction requires review or Docling OCR; no partial extraction was indexed.') from None
+                from backend.utils.docling_bridge import extract_pdf
+                converted = extract_pdf(path)
+                route_reason = str(exc) if isinstance(exc, PdfQualityError) else 'layout_parser_failure'
+        if converted:
+            pages, warnings = converted['pages'], converted['warnings']
+            if route_reason:
+                _validate_ocr_coverage(data, pages)
         loaded = LoadedDocument.from_pages(
             pages, title=path.stem, source_hash=source_hash, source_size=len(data),
         )
         loaded.warnings.extend(warnings)
+        if converted:
+            loaded.extractor_version = converted['extractor_version']
+            loaded.extraction_metadata = converted.get('metadata', {})
+            if route_reason:
+                loaded.extraction_metadata.update({'route': 'docling', 'routing_version': 'pdf-router-v1',
+                                                   'reason': route_reason})
+                loaded.warnings.append('Docling selected by PDF router: ' + route_reason)
         return loaded
     return _load_docx(data, path.stem, source_hash)
+
+
+def _validate_ocr_coverage(data, pages):
+    """OCR success status alone does not establish complete native-page output."""
+    from pypdf import PdfReader
+    from backend.utils.pdf_adapter import _words
+    reader = PdfReader(io.BytesIO(data))
+    if reader.is_encrypted:
+        reader.decrypt('')
+    if len(pages) != len(reader.pages):
+        raise DocumentLoadError('OCR omitted physical pages; no partial extraction was indexed.')
+    for number, (page, recovered) in enumerate(zip(reader.pages, pages, strict=True), 1):
+        native = clean_text(page.extract_text() or '')
+        expected = _words(native)
+        if (native or _has_images(page)) and not recovered.strip():
+            raise DocumentLoadError(f'OCR omitted content on page {number}; no partial extraction was indexed.')
+        if expected and native.count('\ufffd') / max(len(native), 1) <= 0.01:
+            coverage = sum((expected & _words(recovered)).values()) / sum(expected.values())
+            if coverage < 0.8:
+                raise DocumentLoadError(f'OCR lost native text on page {number}; review the source before indexing.')

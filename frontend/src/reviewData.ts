@@ -14,7 +14,7 @@ export function reviewLinkageNote(review: Pick<AdminReview, 'linkage' | 'status'
 }
 
 export function reviewRatingLabel(rating: 'up' | 'down' | null | undefined) {
-  return rating === 'down' ? 'Thumbs down' : rating === 'up' ? 'Thumbs up' : 'Not rated';
+  return rating === 'down' ? 'Negative' : rating === 'up' ? 'Positive' : 'Not rated';
 }
 
 export function pageRange(total: number, offset: number, count: number) {

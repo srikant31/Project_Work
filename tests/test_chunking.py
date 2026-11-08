@@ -153,7 +153,7 @@ def test_offline_cached_production_tokenizer_and_samples():
     if not snapshots:
         pytest.skip("Production tokenizer is not cached locally; no downloads in tests")
     model_tokenizer = AutoTokenizer.from_pretrained(str(snapshots[-1].parent), use_fast=True, local_files_only=True)
-    corpus = Path(__file__).resolve().parents[1] / "data" / "documents"
+    corpus = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "documents"
     for path in sorted(corpus.iterdir()):
         if path.suffix not in {".txt", ".md", ".docx"} and path.name != "sample_equipment_manual.pdf":
             continue

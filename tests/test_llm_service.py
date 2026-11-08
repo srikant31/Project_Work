@@ -14,6 +14,26 @@ from backend.services.llm_service import (
 MESSAGES = [{"role": "system", "content": "Return JSON evidence."}, {"role": "user", "content": "test evidence"}]
 
 
+def test_private_key_file_configuration_does_not_require_key_in_source(monkeypatch, tmp_path):
+    key = tmp_path / 'private.key'; key.write_text('fixture-private-key\n')
+    monkeypatch.setenv('LLM_PROVIDER', 'chat_completions')
+    monkeypatch.setenv('LLM_ENDPOINT', 'https://model.example.test/chat/completions')
+    monkeypatch.setenv('LLM_MODEL', 'fixture-model')
+    monkeypatch.delenv('LLM_API_KEY', raising=False)
+    monkeypatch.setenv('LLM_API_KEY_FILE', str(key))
+    assert configured_llm()._api_key == 'fixture-private-key'
+    key.write_text('bad key with whitespace')
+    with pytest.raises(ValueError, match='private key file'):
+        configured_llm()
+
+
+def test_rate_limit_message_is_actionable_without_exposing_provider_payload():
+    from backend.services.llm_service import LLMRateLimitError
+    with pytest.raises(LLMRateLimitError, match='free-tier limit') as caught:
+        generate(provider(lambda request: httpx.Response(429,text='private diagnostic payload')))
+    assert 'private diagnostic' not in str(caught.value)
+
+
 def provider(handler, **kwargs):
     return ChatCompletionsLLM(endpoint="https://model.example.test/chat/completions", model="configured-model",
                               transport=httpx.MockTransport(handler), **kwargs)

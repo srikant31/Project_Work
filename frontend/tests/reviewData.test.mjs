@@ -19,8 +19,8 @@ test('historical question linkage is explicitly unknown and never paired by time
 test('missing feedback is not presented as a negative vote', () => {
   assert.equal(reviewRatingLabel(null), 'Not rated');
   assert.equal(reviewRatingLabel(undefined), 'Not rated');
-  assert.equal(reviewRatingLabel('up'), 'Thumbs up');
-  assert.equal(reviewRatingLabel('down'), 'Thumbs down');
+  assert.equal(reviewRatingLabel('up'), 'Positive');
+  assert.equal(reviewRatingLabel('down'), 'Negative');
 });
 
 test('pagination represents the actual returned window and empty results', () => {

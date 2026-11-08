@@ -6,6 +6,7 @@ can be attached later without changing retrieval, prompts or grounding logic.
 
 import json
 import os
+from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -17,6 +18,10 @@ class LLMNotConfiguredError(RuntimeError):
 
 
 class LLMProviderError(RuntimeError):
+    pass
+
+
+class LLMRateLimitError(LLMProviderError):
     pass
 
 
@@ -79,6 +84,8 @@ class ChatCompletionsLLM:
         try:
             with httpx.Client(timeout=self.timeout, follow_redirects=False, transport=self.transport, trust_env=False) as client:
                 with client.stream("POST", self.endpoint, json=payload, headers=headers) as response:
+                    if response.status_code == 429:
+                        raise LLMRateLimitError('The model free-tier limit was reached. Wait before sending again; your previous chat is saved. Check provider usage if the daily allowance is exhausted.')
                     if response.status_code != 200:
                         raise LLMProviderError(f"The LLM provider returned HTTP {response.status_code}. Check its local configuration.")
                     pieces, size = [], 0
@@ -113,6 +120,17 @@ def configured_llm():
     endpoint, model = os.getenv("LLM_ENDPOINT", "").strip(), os.getenv("LLM_MODEL", "").strip()
     if not endpoint or not model:
         return UnconfiguredLLM()
-    return ChatCompletionsLLM(endpoint=endpoint, model=model, api_key=os.getenv("LLM_API_KEY"),
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key and os.getenv("LLM_API_KEY_FILE"):
+        try:
+            source = Path(os.environ['LLM_API_KEY_FILE'])
+            if source.stat().st_size > 4096:
+                raise ValueError('Key file is too large')
+            api_key = source.read_text(encoding='utf-8-sig').strip()
+            if not api_key or any(char.isspace() for char in api_key):
+                raise ValueError('Invalid key')
+        except (OSError, ValueError):
+            raise ValueError('Cannot read a valid LLM key from the configured private key file') from None
+    return ChatCompletionsLLM(endpoint=endpoint, model=model, api_key=api_key,
         response_format=os.getenv("LLM_RESPONSE_FORMAT", "json_schema"),
         token_limit_field=os.getenv("LLM_TOKEN_LIMIT_FIELD", "max_completion_tokens"))
