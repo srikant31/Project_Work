@@ -1,10 +1,11 @@
-"""Disabled-by-default provider boundary and optional compatible HTTP adapter.
+"""Provider boundary using the existing compatible HTTP adapter.
 
-No test/model simulator is selected by production configuration. A real provider
-can be attached later without changing retrieval, prompts or grounding logic.
+Groq and local Ollama share invocation, parsing and error handling. No test/model
+simulator is selected by production configuration.
 """
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Protocol
@@ -55,7 +56,7 @@ class ChatCompletionsLLM:
     provider_name = "chat_completions"
 
     def __init__(self, *, endpoint, model, api_key=None, timeout=45, response_format="json_schema",
-                 token_limit_field="max_completion_tokens", transport=None):
+                 token_limit_field="max_completion_tokens", transport=None, temperature=None):
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("LLM endpoint must be an HTTP(S) URL without credentials, query or fragment")
@@ -69,10 +70,13 @@ class ChatCompletionsLLM:
             raise ValueError("Unsupported token limit field")
         self.endpoint, self.model_name, self._api_key = endpoint, model, api_key
         self.timeout, self.response_format, self.token_limit_field, self.transport = timeout, response_format, token_limit_field, transport
+        self.temperature = temperature
 
     def generate(self, messages, *, max_output_tokens, response_schema):
         payload = {"model": self.model_name, "messages": messages, self.token_limit_field: max_output_tokens,
                    "stream": False}
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         if self.response_format == "json_schema":
             payload["response_format"] = {"type": "json_schema", "json_schema": {
                 "name": "grounded_evidence", "strict": True, "schema": response_schema}}
@@ -112,11 +116,23 @@ class ChatCompletionsLLM:
 
 
 def configured_llm():
-    provider = os.getenv("LLM_PROVIDER", "disabled").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "groq").strip().lower()
     if provider in {"", "disabled", "none"}:
         return UnconfiguredLLM()
-    if provider != "chat_completions":
-        raise ValueError("Unsupported LLM_PROVIDER; use disabled or add a provider adapter")
+    try:
+        timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
+    except ValueError:
+        raise ValueError("LLM_TIMEOUT_SECONDS must be a number between 5 and 600") from None
+    if not math.isfinite(timeout) or not 5 <= timeout <= 600:
+        raise ValueError("LLM_TIMEOUT_SECONDS must be a number between 5 and 600")
+    if provider == "ollama":
+        # Never inherit a remote endpoint, model, or credentials for local tests.
+        llm = ChatCompletionsLLM(endpoint="http://localhost:11434/v1/chat/completions",
+            model="qwen2.5:3b", temperature=0.1, token_limit_field="max_tokens", timeout=timeout)
+        llm.provider_name = "ollama"
+        return llm
+    if provider not in {"groq", "chat_completions"}:
+        raise ValueError("Unsupported LLM_PROVIDER; use groq, ollama, chat_completions or disabled")
     endpoint, model = os.getenv("LLM_ENDPOINT", "").strip(), os.getenv("LLM_MODEL", "").strip()
     if not endpoint or not model:
         return UnconfiguredLLM()
@@ -131,6 +147,9 @@ def configured_llm():
                 raise ValueError('Invalid key')
         except (OSError, ValueError):
             raise ValueError('Cannot read a valid LLM key from the configured private key file') from None
-    return ChatCompletionsLLM(endpoint=endpoint, model=model, api_key=api_key,
+    llm = ChatCompletionsLLM(endpoint=endpoint, model=model, api_key=api_key, timeout=timeout,
         response_format=os.getenv("LLM_RESPONSE_FORMAT", "json_schema"),
         token_limit_field=os.getenv("LLM_TOKEN_LIMIT_FIELD", "max_completion_tokens"))
+    if provider == "groq":
+        llm.provider_name = "groq"
+    return llm
