@@ -151,11 +151,16 @@ _CODE = re.compile(r"\b[a-z]{1,6}-?\d+\b")          # auth-403, sev-1, p2, it-00
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _NEGATION = re.compile(r"\b(?:not|no|none|never|cannot|prohibited|forbidden)\b|n't\b")
 _SOURCE_TAG = re.compile(r"\s*\[S\d+\]")
+# Models often write U+2011 (non-breaking hyphen) or another dash look-alike,
+# e.g. "IT\u2011005" or "ABC CORP\u2011managed". Read them as "-" so codes stay
+# codes, and show the user a plain hyphen.
+_HYPHENS = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
+                          "\u2014": "-", "\u2212": "-", "\u00ad": None})
 
 
 def _facts(text):
     """(codes, numbers) in text, normalised so formatting cannot hide a change."""
-    text = (text or "").lower().replace("’", "'")
+    text = (text or "").translate(_HYPHENS).lower().replace("’", "'")
     text = _NUMBER_WORD.sub(lambda m: str(_NUMBER_WORDS[m.group(1)]), text)
     text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)          # 1,000 -> 1000
     codes = set(_CODE.findall(text))
@@ -195,7 +200,7 @@ def check_sentence(sentence, citations):
     """
     if not isinstance(sentence, str) or not sentence.strip():
         return None, "no_sentence"
-    sentence = _SOURCE_TAG.sub("", sentence).strip()
+    sentence = _SOURCE_TAG.sub("", sentence).replace("\u2011", "-").replace("\u00ad", "").strip()
     if not 3 <= len(sentence) <= 600:
         return None, "sentence_too_short_or_long"
     if _INSTRUCTION_LIKE.search(sentence):

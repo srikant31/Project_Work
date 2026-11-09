@@ -194,3 +194,11 @@ def test_one_document_answer_may_skip_values_the_question_did_not_ask_about():
     row = "|Badge replacement|None|1 business day|"
     assert check_sentence("A badge replacement does not require any approval.",
                           [_cite("SD-003", row)])[1] == "accepted"
+
+
+def test_non_breaking_hyphens_from_the_model_are_read_as_codes_and_shown_plainly():
+    cites = [_cite("IT-005", "| Session timeout | 8 hours |"), _cite("SD-003", "|Session timeout|12 hours|")]
+    sentence, why = check_sentence(
+        "The documents disagree: IT\u2011005 says 8 hours, while SD\u2011003 says 12 hours.", cites)
+    assert why == "accepted"
+    assert sentence == "The documents disagree: IT-005 says 8 hours, while SD-003 says 12 hours."
