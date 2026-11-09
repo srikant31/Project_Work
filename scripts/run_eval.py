@@ -18,11 +18,15 @@ Relevance labels (written into every summary):
   strict label:   a retrieved chunk is relevant if it contains a key fact
 Each setting gets its own results file, e.g.
     results/eval_hybrid_k3_grounded-quotes-current-chat-v2_qwen2.5-7b.csv
+Beside it, <same name>_chunks.jsonl holds one JSON line per question: every chunk
+sent to the model (document, page, section, chunk id, position, scores, text,
+whether it holds the answer) and every citation in the answer.
 If a run stops, run the same command again: finished questions are skipped.
 Full runs save each question as a normal chat for the given user.
 """
 import argparse
 import csv
+import json
 import os
 import re
 import statistics
@@ -107,6 +111,32 @@ def retrieval_scores(sources, row, top_k):
     return retrieved, rank, doc_precision, strict, recall
 
 
+def chunk_details(sources, row):
+    """What the model was given, in a form a person can trace back to the document."""
+    facts = key_facts(row)
+    expected = [d for d in row["expected_doc"].split(";") if d]
+    details = []
+    for position, source in enumerate(sources, 1):
+        text = source.get("text") or ""
+        details.append({
+            "position_in_prompt": position,
+            "source_id": source.get("source_id"),
+            "role": source.get("context_role") or "retrieved",
+            "document": doc_ids([source.get("doc_name")])[0],
+            "document_name": source.get("doc_name"),
+            "page": source.get("page_number"),
+            "section": source.get("section_heading"),
+            "chunk_id": source.get("chunk_id"),
+            "characters": [source.get("start_char"), source.get("end_char")],
+            "scores": {key: round(source[key], 4) for key in ("similarity_score", "bm25_score", "fusion_score")
+                       if isinstance(source.get(key), (int, float))},
+            "from_expected_document": doc_ids([source.get("doc_name")])[0] in expected if expected else None,
+            "holds_a_key_fact": any(f in normalize(text) for f in facts) if facts else None,
+            "text": text,
+        })
+    return details
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--email", required=True, help="existing user account to run questions as")
@@ -167,8 +197,10 @@ def main():
     todo = [q for q in questions if q["id"] not in done]
     print(f"{len(questions)} questions, {len(questions) - len(todo)} already done -> {out}")
 
+    details_path = out.with_name(out.stem + "_chunks.jsonl")
     new_file = not out.exists()
-    with out.open("a", encoding="utf-8", newline="") as handle:
+    with out.open("a", encoding="utf-8", newline="") as handle, \
+            details_path.open("a", encoding="utf-8") as details_file:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         if new_file:
             writer.writeheader()
@@ -180,11 +212,14 @@ def main():
                 preview = service.preview(row["question"], args.top_k)
                 retrieval_ms = round((time.perf_counter() - started) * 1000)
                 retrieved, rank, doc_p, strict_p, recall = retrieval_scores(preview["sources"], row, args.top_k)
+                detail = {"id": row["id"], "question": row["question"], "expected_doc": row["expected_doc"],
+                          "key_facts": [f for f in (row["key_fact"], row.get("key_fact_2", "")) if f],
+                          "chunks_sent_to_model": chunk_details(preview["sources"], row)}
                 record.update(retrieved_expected=bool(rank) if expected else "", expected_rank=rank,
                               precision_at_k_doc=doc_p, precision_at_k_strict=strict_p, recall_at_k=recall,
                               retrieved_docs=" ".join(retrieved), retrieval_ms=retrieval_ms, error="")
                 if args.retrieval_only:
-                    record["status"] = "retrieval_only"
+                    record["status"] = detail["status"] = "retrieval_only"
                 else:
                     # Full chat pipeline: its own retrieval, prompt, LLM, quote
                     # validation and saving the conversation.
@@ -198,6 +233,13 @@ def main():
                                   cited_expected=any(d in expected for d in cited) if expected else "",
                                   fact_found=fact_found, fact2_found=fact2_found, auto_complete=complete,
                                   auto_pass=passed, answer_ms=answer_ms, answer=result["answer"])
+                    detail.update(status=result["status"], answer=result["answer"],
+                                  citations=[{key: c.get(key) for key in (
+                                      "source_id", "doc_name", "page_number", "section_heading",
+                                      "chunk_id", "start_char", "end_char", "quote")}
+                                      for c in result["citations"]])
+                details_file.write(json.dumps(detail, ensure_ascii=False) + "\n")
+                details_file.flush()
             except KeyboardInterrupt:
                 print("\nStopped. Run the same command again to continue.")
                 break
