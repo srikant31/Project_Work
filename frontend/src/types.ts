@@ -3,7 +3,7 @@ export interface ConversationSummary { conversation_id: string; title: string | 
 export interface HistoryMessage {
   message_id: string; role: 'user' | 'assistant'; content: string; created_at: string | null;
   feedback_comment?: string | null; reply_to_message_id: string | null; rating: 'up' | 'down' | null; insufficient_context: boolean | null;
-  generation: { prompt_version?: string; answer_mode?: string; answer_status?: string; citations?: Partial<Citation>[] } | null;
+  generation: { prompt_version?: string; answer_mode?: string; answer_status?: string; answer_style?: 'quotes' | 'sentence'; citations?: Partial<Citation>[] } | null;
 }
 export interface ConversationHistory { conversation_id: string; title: string | null; messages: HistoryMessage[] }
 export interface ConversationsResult { conversations: ConversationSummary[]; total: number; limit: number; offset: number }

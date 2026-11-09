@@ -48,12 +48,67 @@ Return ONLY JSON: {"insufficient_evidence": boolean, "claims":
 [{"source_id": "S1", "quote": "Exact source sentence or line."}]}.
 """
 
-PROMPT_VARIANTS = {"default": DEFAULT_PROMPT, "spec_minimal": SPEC_MINIMAL_PROMPT}
+# The default prompt plus explicit copying and conflict rules. Failed answers
+# were mostly correct quotes copied inexactly (dropped table pipes, merged
+# lines) and policy conflicts answered from one side only.
+STRICT_COPY_PROMPT = DEFAULT_PROMPT + """
+Copying rules:
+- Copy each quote character for character from ONE source's text, including
+  every "|" of a table row, capital letters, numbers and punctuation.
+- A table row is quoted as the whole line, from its first "|" to its last "|".
+- Never join text from two different lines or two sources into one quote; use
+  separate claims instead.
+- If the answer is in a table row, also quote that table's header row as a
+  separate claim when it is in the evidence.
+- If two sources state different values for the same fact, return a claim
+  from EACH source; never return only one side of a conflict.
+"""
+
+PROMPT_VARIANTS = {"default": DEFAULT_PROMPT, "spec_minimal": SPEC_MINIMAL_PROMPT,
+                   "strict_copy": STRICT_COPY_PROMPT}
 PROMPT_VARIANT = os.getenv("RAG_PROMPT_VARIANT", "default").strip() or "default"
 if PROMPT_VARIANT not in PROMPT_VARIANTS:
     raise ValueError(f"RAG_PROMPT_VARIANT must be one of: {', '.join(PROMPT_VARIANTS)}")
 SYSTEM_PROMPT = PROMPT_VARIANTS[PROMPT_VARIANT]
 PROMPT_VERSION = BASE_PROMPT_VERSION if PROMPT_VARIANT == "default" else f"{BASE_PROMPT_VERSION}+{PROMPT_VARIANT}"
+
+# RAG_ANSWER_STYLE (environment, read at import):
+#   quotes   (default) the answer IS the verified quotes, as before.
+#   sentence the model also writes a short plain-English answer from its own
+#            quotes. grounding_service.check_sentence() only shows it if every
+#            number and code in it appears in the verified quotes (and negations
+#            match); otherwise the user gets the verified quotes, as before.
+ANSWER_STYLES = ("quotes", "sentence")
+ANSWER_STYLE = os.getenv("RAG_ANSWER_STYLE", "quotes").strip().lower() or "quotes"
+if ANSWER_STYLE not in ANSWER_STYLES:
+    raise ValueError("RAG_ANSWER_STYLE must be quotes or sentence")
+
+SENTENCE_RULES = """
+Plain-language answer (this replaces the output format given above):
+- Also return "answer": one to three short sentences that answer the question
+  in plain English for an employee, using ONLY facts stated in your quotes.
+- Keep every number, amount, time period and code exactly as the quotes state
+  it (for example "$350", "30 minutes", "AUTH-403"). Do not add facts, advice,
+  examples or numbers that are not in your quotes. Do not repeat numbers from
+  the question unless your quotes contain them.
+- Keep negations and conditions ("not", "never", "unless", "only if").
+- For a table row, keep each value's meaning from its column header: a value
+  in a "Trigger" column is when the period starts, not when it ends. If unsure
+  what a column means, name it ("retention period: 7 years; trigger: end of
+  tax year").
+- If the question assumes something your quotes contradict, say what the
+  quotes actually state.
+- If your quotes from different documents disagree, say that the documents
+  disagree and give each value with its document name.
+- Do not write source ids such as [S1]; the application adds the citations.
+- If insufficient_evidence is true, return "answer" as an empty string.
+Return ONLY JSON: {"insufficient_evidence": boolean, "claims":
+[{"source_id": "S1", "quote": "Exact complete source sentence or line."}],
+"answer": "Short plain-English answer."}.
+"""
+if ANSWER_STYLE == "sentence":
+    SYSTEM_PROMPT = SYSTEM_PROMPT + SENTENCE_RULES
+    PROMPT_VERSION = f"{PROMPT_VERSION}+sentence"
 
 RESPONSE_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -67,3 +122,7 @@ RESPONSE_SCHEMA = {
     },
     "required": ["insufficient_evidence", "claims"],
 }
+if ANSWER_STYLE == "sentence":
+    RESPONSE_SCHEMA = {**RESPONSE_SCHEMA,
+                       "properties": {**RESPONSE_SCHEMA["properties"], "answer": {"type": "string"}},
+                       "required": ["insufficient_evidence", "claims", "answer"]}

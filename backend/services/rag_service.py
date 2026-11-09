@@ -16,7 +16,8 @@ from backend.repositories.conversation_repository import ConversationRepository
 from backend.services.context_service import ContextBuilder, serialize_messages
 from backend.services.document_service import DocumentNotFoundError
 from backend.services.grounding_service import GroundingResult, insufficient_result, quote_boundary_offsets, validate_claims
-from backend.services.llm_service import LLMNotConfiguredError, configured_llm
+from backend.services.llm_service import (LLMNotConfiguredError, LLMProviderError, LLMRateLimitError,
+                                          LLMResponseError, configured_llm)
 from backend.services.search_service import SearchService
 from backend.services.table_context import missing_table_header
 from backend.services.query_rewrite_service import QueryRewriteService, Rewrite, REWRITE_VERSION
@@ -40,7 +41,8 @@ class RAGService:
                 "configured": getattr(self.llm, "configured", True), "prompt_version": PROMPT_VERSION,
                 "context_token_budget": None, "context_byte_budget": self.context_builder.max_context_bytes,
                 "max_output_tokens": self.max_output_tokens, "token_count_method": "utf8_bytes",
-                "retrieval_mode": os.getenv("RETRIEVAL_MODE", "vector"), "answer_mode": "verified_source_quotes", "conversation_memory": True, "memory_scope": "current_conversation", "history_max_messages": 6, "history_max_bytes": 6000}
+                "retrieval_mode": os.getenv("RETRIEVAL_MODE", "vector"), "answer_mode": "verified_source_quotes",
+                "answer_style": os.getenv("RAG_ANSWER_STYLE", "quotes").strip().lower() or "quotes", "conversation_memory": True, "memory_scope": "current_conversation", "history_max_messages": 6, "history_max_bytes": 6000}
 
     def _context(self, question, top_k):
         if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 20:
@@ -101,6 +103,29 @@ class RAGService:
                 "context_role": "table_header_chunk",
                 **quote_boundary_offsets(source_text, row.start_char, row.end_char)}
 
+    def _generate_and_validate(self, context):
+        """One model call, retried ONCE if the reply breaks the JSON format.
+
+        Structured output occasionally fails (Groq "json_validate_failed", a
+        cut-off reply, a missing field). The retry doubles the output budget
+        (max 4096), because a reasoning model's hidden thinking can use up the
+        budget before the JSON is finished. Rate limits and other provider
+        errors are not retried: a retry would only spend more of the allowance.
+        Returns (grounding result, number of model calls).
+        """
+        for attempt in (1, 2):
+            budget = self.max_output_tokens if attempt == 1 else min(2 * self.max_output_tokens, 4096)
+            try:
+                payload = self.llm.generate(context.messages, max_output_tokens=budget,
+                                            response_schema=RESPONSE_SCHEMA)
+                return validate_claims(payload, context), attempt
+            except LLMRateLimitError:
+                raise
+            except (LLMResponseError, LLMProviderError) as exc:
+                format_error = isinstance(exc, LLMResponseError) or "json_validate_failed" in str(exc)
+                if attempt == 2 or not format_error:
+                    raise
+
     def preview(self, question, top_k=3):
         context = self._context(question, top_k)
         return {"question": question.strip(), **asdict(context), "token_count_method": "utf8_bytes"}
@@ -137,6 +162,7 @@ class RAGService:
         if not getattr(self.llm, "configured", True):
             raise LLMNotConfiguredError("LLM provider is not configured. Preview the context or use Retrieval lab; provider calls are deferred.")
         started = perf_counter()
+        llm_attempts = 0
         if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 20:
             raise ValueError("top_k must be between 1 and 20")
         rewrite = (Rewrite('', 'Please restate the relevant details and your question; the recent message exceeds the conversation context limit.', [], [])
@@ -149,8 +175,7 @@ class RAGService:
             if history:
                 context = self.context_builder.build(rewrite.query, context.sources, history=history, original_question=question)
             if context.sources:
-                payload = self.llm.generate(context.messages, max_output_tokens=self.max_output_tokens, response_schema=RESPONSE_SCHEMA)
-                grounded = validate_claims(payload, context)
+                grounded, llm_attempts = self._generate_and_validate(context)
             else:
                 grounded = insufficient_result("no_eligible_sources")
         model_called = bool(rewrite.messages or context.sources)
@@ -178,7 +203,12 @@ class RAGService:
                         "token_count_method": "utf8_bytes", "answer_mode": "verified_source_quotes",
                         "citations": grounded.citations,
                         "grounding": {"validated_quotes": grounded.validated_quotes,
-                                      "rejected_claims": grounded.rejected_claims, "reason": grounded.reason},
+                                      "rejected_claims": grounded.rejected_claims, "reason": grounded.reason,
+                                      "rejected": list(grounded.rejected_details),
+                                      "answer_style": grounded.answer_style,
+                                      "sentence": grounded.sentence,
+                                      "sentence_check": grounded.sentence_check,
+                                      "llm_attempts": llm_attempts},
                         "model_called": model_called, "provider": getattr(self.llm, "provider_name", "injected")}
             message = repository.add_message(conversation.id, "assistant", grounded.answer,
                 reply_to_message_id=question_message.message_id,

@@ -1,6 +1,16 @@
 """Real-store tests are opt-in and confined to throwaway PostgreSQL schemas."""
 
+import os
 import uuid
+
+# Answer settings are read once, when the backend is imported, and the backend
+# loads .env without overriding variables that are already set. Pin them here,
+# before any backend import, so tests check the documented defaults whatever a
+# developer's .env selects (e.g. RAG_ANSWER_STYLE=sentence for the live app).
+# Tests that exercise other settings set them explicitly and reload.
+os.environ.update({"RAG_PROMPT_VARIANT": "default", "RAG_ANSWER_STYLE": "quotes",
+                   "RAG_QUOTE_MATCH": "exact", "RAG_MAX_OUTPUT_TOKENS": "512",
+                   "RAG_MAX_CONTEXT_BYTES": "12000"})
 
 import pytest
 

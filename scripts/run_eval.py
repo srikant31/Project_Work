@@ -4,6 +4,7 @@ Usage (from the project root, with the backend's .env in place):
     python scripts/run_eval.py --email admin@helpdesk --mode hybrid --top-k 3
     python scripts/run_eval.py --email admin@helpdesk --mode vector --retrieval-only
     python scripts/run_eval.py --email admin@helpdesk --prompt-variant spec_minimal
+    python scripts/run_eval.py --email admin@helpdesk --answer-style sentence --only D01,P01
 
 For every question in data/test_questions/eval_set.csv:
   1. retrieval (no LLM)  -> rank of the expected document, Precision@K (document
@@ -20,7 +21,8 @@ Each setting gets its own results file, e.g.
     results/eval_hybrid_k3_grounded-quotes-current-chat-v2_qwen2.5-7b.csv
 Beside it, <same name>_chunks.jsonl holds one JSON line per question: every chunk
 sent to the model (document, page, section, chunk id, position, scores, text,
-whether it holds the answer) and every citation in the answer.
+whether it holds the answer), every citation in the answer, and every quote the
+checker rejected with the reason (rejected_quotes).
 If a run stops, run the same command again: finished questions are skipped.
 Full runs save each question as a normal chat for the given user.
 """
@@ -42,7 +44,7 @@ FIELDS = ["id", "type", "question", "expected_doc", "should_answer", "status", "
           "retrieved_expected", "expected_rank", "precision_at_k_doc", "precision_at_k_strict",
           "recall_at_k", "retrieved_docs", "cited_docs", "cited_expected",
           "fact_found", "fact2_found", "auto_complete", "auto_pass",
-          "retrieval_ms", "answer_ms", "answer", "error",
+          "retrieval_ms", "answer_ms", "answer", "answer_style", "sentence_check", "sentence", "error",
           "manual_correct", "manual_relevant", "manual_grounded", "manual_complete", "manual_notes"]
 
 
@@ -150,6 +152,9 @@ def main():
     parser.add_argument("--retrieval-only", action="store_true", help="measure search only; no LLM calls")
     parser.add_argument("--prompt-variant", default=None,
                         help="prompt to test (see PROMPT_VARIANTS in backend/prompts/rag_prompts.py)")
+    parser.add_argument("--answer-style", choices=["quotes", "sentence"], default=None,
+                        help="quotes: answer is the verified quotes; sentence: a checked plain-English "
+                             "sentence is shown when it passes (see RAG_ANSWER_STYLE)")
     parser.add_argument("--questions", default=str(ROOT / "data/test_questions/eval_set.csv"))
     parser.add_argument("--only", help="comma-separated question ids, e.g. D01,T04")
     parser.add_argument("--pause", type=float, default=0.0, help="seconds between questions (rate limits)")
@@ -160,11 +165,15 @@ def main():
     os.environ["RETRIEVAL_MODE"] = args.mode
     if args.prompt_variant:
         os.environ["RAG_PROMPT_VARIANT"] = args.prompt_variant
+    if args.answer_style:
+        os.environ["RAG_ANSWER_STYLE"] = args.answer_style
     from backend.database.connection import SessionLocal  # also loads .env
     from backend.database.models import User
     os.environ["RETRIEVAL_MODE"] = args.mode  # .env must not override the chosen mode
     if args.prompt_variant:
         os.environ["RAG_PROMPT_VARIANT"] = args.prompt_variant
+    if args.answer_style:
+        os.environ["RAG_ANSWER_STYLE"] = args.answer_style
     from backend.prompts.rag_prompts import PROMPT_VERSION
     from backend.services.embedding_service import EmbeddingService
     from backend.services.llm_service import UnconfiguredLLM, configured_llm
@@ -190,7 +199,8 @@ def main():
     prompt = "noprompt" if args.retrieval_only else PROMPT_VERSION
     out = ROOT / "results" / evaluation_filename(args.mode, args.top_k, prompt, model, args.run_label)
     out.parent.mkdir(exist_ok=True)
-    print(f"Settings: mode={args.mode} top_k={args.top_k} prompt={PROMPT_VERSION} model={model}")
+    print(f"Settings: mode={args.mode} top_k={args.top_k} prompt={PROMPT_VERSION} model={model} "
+          f"answer_style={os.getenv('RAG_ANSWER_STYLE', 'quotes')}")
     done = set()
     if out.exists():
         with out.open(encoding="utf-8", newline="") as handle:
@@ -205,9 +215,13 @@ def main():
 
     details_path = out.with_name(out.stem + "_chunks.jsonl")
     new_file = not out.exists()
+    fieldnames = FIELDS
+    if not new_file:  # keep an older file's columns so resumed rows line up
+        with out.open(encoding="utf-8", newline="") as existing:
+            fieldnames = next(csv.reader(existing), None) or FIELDS
     with out.open("a", encoding="utf-8", newline="") as handle, \
             details_path.open("a", encoding="utf-8") as details_file:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         if new_file:
             writer.writeheader()
         for number, row in enumerate(todo, 1):
@@ -233,17 +247,28 @@ def main():
                     result = service.answer(row["question"], actor, args.top_k)
                     answer_ms = round((time.perf_counter() - started) * 1000)
                     cited = doc_ids(c.get("doc_name") for c in result["citations"])
-                    fact_found, fact2_found, complete, passed = grade(row, result["status"], result["answer"])
+                    # The verified quotes are the evidence; in sentence mode the
+                    # shown answer is a rewording of them, so grade both.
+                    evidence = "\n".join([result["answer"], *(c.get("quote") or "" for c in result["citations"])])
+                    fact_found, fact2_found, complete, passed = grade(row, result["status"], evidence)
+                    grounding = result.get("grounding") or {}
                     record.update(status=result["status"], reason=result["grounding"].get("reason"),
                                   cited_docs=" ".join(cited),
                                   cited_expected=any(d in expected for d in cited) if expected else "",
                                   fact_found=fact_found, fact2_found=fact2_found, auto_complete=complete,
-                                  auto_pass=passed, answer_ms=answer_ms, answer=result["answer"])
+                                  auto_pass=passed, answer_ms=answer_ms, answer=result["answer"],
+                                  answer_style=grounding.get("answer_style") or "",
+                                  sentence_check=grounding.get("sentence_check") or "",
+                                  sentence=grounding.get("sentence") or "")
                     detail.update(status=result["status"], answer=result["answer"],
                                   citations=[{key: c.get(key) for key in (
                                       "source_id", "doc_name", "page_number", "section_heading",
                                       "chunk_id", "start_char", "end_char", "quote")}
-                                      for c in result["citations"]])
+                                      for c in result["citations"]],
+                                  rejected_quotes=result["grounding"].get("rejected", []),
+                                  answer_style=grounding.get("answer_style"),
+                                  model_sentence=grounding.get("sentence"),
+                                  sentence_check=grounding.get("sentence_check"))
                 details_file.write(json.dumps(detail, ensure_ascii=False) + "\n")
                 details_file.flush()
             except KeyboardInterrupt:
@@ -319,6 +344,14 @@ def summarize(path):
     print(f"Hallucination rate               : {len(wrongly_answered)}/{len(must_refuse)} unsupported questions answered")
     print(f"Overall auto pass                : {sum(truth(r['auto_pass']) for r in rows)}/{len(rows)}")
     print(f"Full answer time, median         : {_median_s(r['answer_ms'] for r in rows)}")
+    checked = [r for r in rows if r.get("sentence_check") and r["status"] == "answered"]
+    if checked:
+        shown = [r for r in checked if r.get("answer_style") == "sentence"]
+        print(f"Plain sentence shown             : {len(shown)}/{len(checked)} answered questions "
+              "(the rest showed the verified quotes)")
+        for r in checked:
+            if r.get("answer_style") != "sentence":
+                print(f"  {r['id']:4} sentence replaced by quotes: {r['sentence_check']}")
     for kind, results in sorted(by_type.items()):
         print(f"  {kind:12} {sum(results)}/{len(results)}")
 

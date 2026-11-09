@@ -67,6 +67,10 @@ class ConversationService:
         if not isinstance(value, dict):
             return None
         result = {key: value[key] for key in ("prompt_version", "answer_mode", "answer_status") if isinstance(value.get(key), str)}
+        grounding = value.get("grounding")
+        style = grounding.get("answer_style") if isinstance(grounding, dict) else None
+        if style in {"quotes", "sentence"}:
+            result["answer_style"] = style  # was a checked plain sentence shown?
         fields = {"source_id", "doc_id", "doc_name", "version", "source_hash", "chunk_id", "page_number",
                   "section_heading", "start_char", "end_char", "quote"}
         raw = value.get("citations")

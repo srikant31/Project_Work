@@ -71,6 +71,7 @@ export default function ConversationHistory({ selectedId, onSelect, onNew, onSav
             {message.generation?.answer_status === 'clarification_required' && <p className="section-note">Clarification requested before policy retrieval.</p>}
             {message.insufficient_context === true && <p className="section-note">Insufficient evidence recorded.</p>}
             {!message.reply_to_message_id && <p className="section-note">Legacy response: exact question link was not recorded.</p>}
+            {message.generation?.answer_style === 'sentence' && !!message.generation?.citations?.length && <p className="section-note">Written from the verified source quotes below. Open a source to see the exact text.</p>}
             {message.generation?.citations?.map((citation, index) => <details className="history-citation" key={index}><summary>{citation.doc_name || 'Saved source'} · Version {citation.version ?? 'unknown'} · {citation.page_number ? `Page ${citation.page_number}` : citation.section_heading || 'Document text'}</summary>
               <blockquote>{citation.quote || 'Quote not recorded'}</blockquote>{citation.chunk_id && <EvidenceButton responseId={message.message_id} chunkId={citation.chunk_id} />}</details>)}
             <div className="history-actions" aria-label="Response feedback"><span>Was this helpful?</span>
