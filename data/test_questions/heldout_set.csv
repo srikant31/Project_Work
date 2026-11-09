@@ -1,0 +1,13 @@
+id,type,question,expected_doc,key_fact,key_fact_2,should_answer,notes
+H01,direct,How far ahead must a host register a visitor before arrival?,FA-001,The host registers the visitor through the visitor management system at least two hours before arrival.,,yes,New visitor-registration fact.
+H02,paraphrase,Will my flexible spending account renew itself without me enrolling again?,HR-003,FSAs do not carry forward automatically.,,yes,New annual FSA enrollment fact.
+H03,direct,How soon after a meeting must the organizer send the notes?,RC-003,Send notes within 24 hours.,,yes,New meeting-notes delivery fact.
+H04,direct,How long may a role-change access-retention approval last without renewal?,IT-001,Retention approvals are time-limited to 90 days unless renewed.,,yes,New access-retention exception fact.
+H05,paraphrase,"After a serious security incident is closed, when must its post-incident review happen?",SE-004,"Within 10 business days of closing an incident of SEV-1 or SEV-2 severity, the Incident Commander conducts a post-incident review.",,yes,New post-incident review fact.
+H06,direct,"How long does standard vendor onboarding take, and when can it take longer?",VM-001,Standard onboarding takes 10 business days; Critical and High tier may take 20 business days if Information Security review is substantial.,,yes,New vendor onboarding timeline fact.
+H07,table,"Which approvals are required for international travel, regardless of cost?",FI-004,"International, any cost | Manager, Director, and Vice President",,yes,Authorization matrix; new row.
+H08,table,What is the maximum duration of a vendor badge?,FA-001,Vendor | Vendor staff with recurring on-site need | Up to 12 months | Visitor areas plus specified zones,,yes,Badge-type matrix; new row.
+H09,conflict,Do the expense reimbursement and corporate-card administration documents state the same receipt cutoff? Quote both rules.,FI-001;FI-003,Receipts are required for every expense of $50 or more.,|Keep receipts|Required for transactions over $75|,yes,Apparent threshold conflict across different policy scopes; report both without inventing supersession.
+H10,absent,What percentage salary increase has ABC CORP approved for next year?,,,,no,No salary-increase schedule in this corpus.
+H11,absent,What is the bank account number used to pay vendor Northstar Systems?,,,,no,No vendor bank account directory in the corpus.
+H12,unrelated,Give me a recipe for a chocolate birthday cake.,,,,no,Unrelated to company helpdesk policies.
