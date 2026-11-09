@@ -66,6 +66,11 @@ def safe_name(value):
     return re.sub(r"[^A-Za-z0-9.+]+", "-", str(value)).strip("-") or "unnamed"
 
 
+def evaluation_filename(mode, top_k, prompt, model, run_label=None):
+    suffix = "_" + safe_name(run_label) if run_label is not None else ""
+    return f"eval_{mode}_k{top_k}_{safe_name(prompt)}_{safe_name(model)}{suffix}.csv"
+
+
 def key_facts(row):
     return [normalize(fact) for fact in (row["key_fact"], row.get("key_fact_2", "")) if fact]
 
@@ -148,6 +153,7 @@ def main():
     parser.add_argument("--questions", default=str(ROOT / "data/test_questions/eval_set.csv"))
     parser.add_argument("--only", help="comma-separated question ids, e.g. D01,T04")
     parser.add_argument("--pause", type=float, default=0.0, help="seconds between questions (rate limits)")
+    parser.add_argument("--run-label", help="optional suffix to keep separate evaluation runs")
     args = parser.parse_args()
 
     # Both are read when the backend is imported, so set them first.
@@ -182,7 +188,7 @@ def main():
                          retriever=RetrievalService(), llm=llm)
 
     prompt = "noprompt" if args.retrieval_only else PROMPT_VERSION
-    out = ROOT / "results" / f"eval_{args.mode}_k{args.top_k}_{safe_name(prompt)}_{safe_name(model)}.csv"
+    out = ROOT / "results" / evaluation_filename(args.mode, args.top_k, prompt, model, args.run_label)
     out.parent.mkdir(exist_ok=True)
     print(f"Settings: mode={args.mode} top_k={args.top_k} prompt={PROMPT_VERSION} model={model}")
     done = set()
