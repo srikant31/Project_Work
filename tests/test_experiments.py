@@ -54,7 +54,7 @@ def test_strict_request_validation(case):
     elif case == "no_answerable":
         payload["questions"][0].update(answerable=False, expected_doc_id=None)
     elif case == "too_many_documents":
-        payload["document_ids"] += [str(uuid.uuid4()) for _ in range(10)]
+        payload["document_ids"] += [str(uuid.uuid4()) for _ in range(40)]
     elif case == "too_many_questions":
         payload["questions"] = [{**payload["questions"][0], "question_id": f"q{i}"} for i in range(101)]
     elif case == "too_many_configurations":
@@ -82,19 +82,24 @@ def test_evidence_union_respects_exact_source_offsets_and_document_identity():
                                   expected_source_key="policy.txt", evidence_quote=quote)
     unrelated = [{**interval, "doc_id": "wrong-source", "rank": index + 1} for index, interval in enumerate(intervals)]
     score = score_question(question, unrelated, "expected-source", source_text=text, occurrences=spans)
-    assert score == {"source_hit": False, "evidence_hit": False, "reciprocal_rank": 0.0}
+    assert score == {"source_hit": False, "evidence_hit": False, "reciprocal_rank": 0.0,
+                     "precision_at_k": 0.0, "strict_precision_at_k": 0.0, "recall_at_k": 0.0}
 
 
 def test_answerable_and_evidence_denominators_exclude_unsupported_diagnostics():
     rows = [
-        {"answerable": True, "source_hit": True, "evidence_hit": True, "reciprocal_rank": 0.5, "latency_ms": 10},
-        {"answerable": True, "source_hit": False, "evidence_hit": None, "reciprocal_rank": 0.0, "latency_ms": 30},
+        {"answerable": True, "source_hit": True, "evidence_hit": True, "reciprocal_rank": 0.5, "latency_ms": 10,
+         "precision_at_k": 2 / 3, "strict_precision_at_k": 1 / 3, "recall_at_k": 1.0},
+        {"answerable": True, "source_hit": False, "evidence_hit": None, "reciprocal_rank": 0.0, "latency_ms": 30,
+         "precision_at_k": 0.0, "strict_precision_at_k": None, "recall_at_k": None},
         {"answerable": False, "source_hit": None, "evidence_hit": None, "reciprocal_rank": None, "latency_ms": 1000},
     ]
     result = aggregate_metrics(rows)
     assert result == {"answerable_count": 2, "evidence_question_count": 1, "unsupported_count": 1,
                       "source_hit_rate": 0.5, "evidence_hit_rate": 1.0,
-                      "mean_reciprocal_rank": 0.25, "mean_latency_ms": 20.0}
+                      "mean_reciprocal_rank": 0.25, "precision_at_k": pytest.approx(1 / 3),
+                      "strict_precision_at_k": pytest.approx(1 / 3),
+                      "recall_at_k": 1.0, "mean_latency_ms": 20.0}
     assert aggregate_metrics([rows[1]])["evidence_hit_rate"] is None
     unsupported = ExperimentQuestion(question_id="out", question="What is the bonus percentage?", answerable=False)
     diagnostic = score_question(unsupported, [{"doc_id": "any", "rank": 1}], None)
@@ -362,3 +367,37 @@ def test_pdf_corpus_keeps_physical_blank_page_boundaries(db_factory, real_embedd
     hits = report["results"][0]["questions"][0]["hits"]
     assert hits and all(hit["page_number"] >= 2 for hit in hits)
     assert report["results"][0]["evidence_hit_rate"] is None
+
+
+def test_precision_and_recall_at_k_measure_noise_and_partial_evidence():
+    from backend.services.experiment_service import evidence_coverage
+    text = "Intro.\n\nClaims are due within 21 calendar days of travel."
+    quote = "Claims are due within 21 calendar days of travel."
+    spans = evidence_occurrences(text, quote)
+    start, end = spans[0]
+    middle = text.index("21")
+    question = ExperimentQuestion(question_id="q", question="When are claims due?", answerable=True,
+                                  expected_source_key="policy.txt", evidence_quote=quote)
+    # Top 3: one chunk holds the first half of the quote, two are from other documents.
+    hits = [{"doc_id": "expected", "rank": 1, "start_char": start, "end_char": middle},
+            {"doc_id": "other", "rank": 2, "start_char": 0, "end_char": 5},
+            {"doc_id": "other", "rank": 3, "start_char": 0, "end_char": 5}]
+    score = score_question(question, hits, "expected", source_text=text, occurrences=spans, top_k=3)
+    assert score["precision_at_k"] == pytest.approx(1 / 3)
+    assert score["evidence_hit"] is False            # quote not fully retrieved
+    assert 0.3 < score["recall_at_k"] < 0.6           # but part of it was
+    full = score_question(question, [{**hits[0], "end_char": end}], "expected",
+                          source_text=text, occurrences=spans, top_k=3)
+    assert full["evidence_hit"] is True and full["recall_at_k"] == 1.0
+    assert full["precision_at_k"] == pytest.approx(1 / 3)  # denominator is K, not hits returned
+    # Same document but a chunk that misses the quote: relevant by document, not by evidence.
+    off_topic = {"doc_id": "expected", "rank": 2, "start_char": 0, "end_char": 5}
+    mixed = score_question(question, [{**hits[0], "end_char": end}, off_topic], "expected",
+                           source_text=text, occurrences=spans, top_k=2)
+    assert mixed["precision_at_k"] == 1.0 and mixed["strict_precision_at_k"] == 0.5
+    assert evidence_coverage(text, spans, []) == 0.0
+
+
+def test_whole_corpus_fits_document_limit():
+    from backend.models.experiment_models import MAX_EXPERIMENT_DOCUMENTS
+    assert MAX_EXPERIMENT_DOCUMENTS >= 35

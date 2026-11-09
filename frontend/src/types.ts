@@ -90,10 +90,12 @@ export interface GoldQuestion {
 export interface ExperimentConfig {
   documents: ExperimentDocument[]; presets: ExperimentCandidate[];
   dataset_schema: Record<string, unknown>; example: GoldQuestion[];
+  limits?: { documents: number; questions: number; configurations: number };
 }
 export interface ExperimentResult extends ExperimentCandidate {
   chunk_count: number; source_hit_rate: number | null; evidence_hit_rate: number | null;
   mean_reciprocal_rank: number | null; mean_latency_ms: number | null;
+  precision_at_k?: number | null; strict_precision_at_k?: number | null; recall_at_k?: number | null;
   answerable_count?: number; evidence_question_count?: number; unsupported_count?: number;
   questions: Record<string, unknown>[];
 }

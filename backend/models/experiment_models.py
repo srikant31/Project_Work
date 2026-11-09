@@ -7,6 +7,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
 
+# Large enough for the whole corpus: fewer documents means fewer distractors
+# and optimistic retrieval scores. Size is still bounded by characters/chunks.
+MAX_EXPERIMENT_DOCUMENTS = 40
+
+
 class ExperimentQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -66,7 +71,7 @@ class ExperimentConfiguration(BaseModel):
 class ExperimentRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    document_ids: list[UUID] = Field(min_length=1, max_length=10)
+    document_ids: list[UUID] = Field(min_length=1, max_length=MAX_EXPERIMENT_DOCUMENTS)
     questions: list[ExperimentQuestion] = Field(min_length=1, max_length=100)
     configurations: list[ExperimentConfiguration] = Field(min_length=1, max_length=12)
 

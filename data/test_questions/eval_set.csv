@@ -1,0 +1,45 @@
+id,type,question,expected_doc,key_fact,key_fact_2,should_answer,notes
+D01,direct,How long are payroll records retained?,RC-001,Payroll records|7 years|End of tax year,,yes,
+D02,direct,What is the VPN idle timeout?,IT-005;SD-003,Idle timeout | 30 minutes,|Idle timeout|30 minutes|,yes,Both documents agree on 30 minutes
+D03,direct,What does VPN error AUTH-403 mean?,IT-005,AUTH-403 | Account locked | Wait 30 minutes or call Service Desk,,yes,
+D04,direct,What is the first response time for a P1 ticket?,SD-001,executive unable to work | 15 min | 4 hours,,yes,
+D05,direct,After how many failed login attempts does an account lock?,IT-002,Accounts lock after five consecutive failed attempts and unlock automatically after 30 minutes.,,yes,
+D06,direct,How long is a temporary password valid?,IT-002,one-time password valid for 45 minutes,,yes,
+D07,direct,Within how many days must I submit an expense?,FI-001,within 30 days of the expense date,,yes,
+D08,direct,Do I need a receipt for a $40 expense?,FI-001,"For expenses below $50, a receipt is not required",,yes,
+D09,direct,What is the hotel limit in high-cost markets?,FI-001,$350/night in high-cost markets,,yes,
+D10,direct,What is the size limit of my mailbox?,IT-006,A: 50 GB.,,yes,
+D11,direct,How long do deleted emails stay in the Deleted Items folder?,IT-006,Deleted items remain in your Deleted Items folder for 30 days.,,yes,
+D12,direct,Who must approve a purchase requisition of $3000?,FI-002,"$501 – $5,000 | Manager and Director",,yes,
+D13,direct,How many hours a week must I work to be eligible for benefits?,HR-003,scheduled to work 30 or more hours per week,,yes,
+D14,direct,How soon must a workplace incident be reported?,FA-004,"Within 24 hours of the incident, or immediately if there was an injury.",,yes,
+D15,direct,How long is an employee's email account kept after they leave?,RC-001,retained for 90 days after separation,,yes,
+P01,paraphrase,"I typed my password wrong too many times and got locked out, how long until I can try again?",IT-002,unlock automatically after 30 minutes,,yes,
+P02,paraphrase,How much notice do I need to give before taking a vacation?,HR-002,at least five business days before the first day of absence,,yes,
+P03,paraphrase,"I was sick for four days, do I need a doctor's note?",HR-002,Absence of more than three consecutive business days requires a medical certificate,,yes,
+P04,paraphrase,Can I forward my work emails to my Gmail?,IT-006,Forwarding ABC CORP email to a personal account is prohibited,,yes,
+P05,paraphrase,How quickly should my computer lock itself when I walk away?,SE-005,Enable automatic screen lock at 5 minutes of inactivity,,yes,
+P06,paraphrase,Someone is stealing our data right now. What severity is that?,SE-004,Active data exfiltration,,yes,Answer should be SEV-1 Critical
+P07,paraphrase,Can I use the company card for a personal purchase?,FI-003,Personal charges are not permitted and must be repaid,,yes,
+P08,paraphrase,How much can I spend per person on a client dinner?,FI-001,Meals — client entertainment|$150/person,,yes,
+T01,table,Does a badge replacement need approval?,SD-003,Badge replacement|None|1 business day,,yes,Header row needed to read 'None' as approval
+T02,table,What is the spending limit on a manager's corporate card?,FI-003,"|Manager|$10,000|",,yes,
+T03,table,How long are access logs kept?,RC-001,Access logs|1 year|Log date,,yes,Row is on page 2 of the table
+T04,table,How must Restricted data be transmitted?,SE-001,Restricted | Encrypted email with recipient verification; approved secure file transfer; never standard email,,yes,2-column DOCX row (citation fix)
+T05,table,What does VPN error NET-310 mean?,IT-005,NET-310 | Concurrent session limit | Disconnect another device,,yes,
+T06,table,How long are board minutes kept?,RC-001,minutes|Permanent|N/A,,yes,Cell contains <br>; model may drop it and fail the quote check
+C01,collision,What is the response time for a P2 issue?,SD-001,30 min | 8 business hours,,yes,SE-002 and SE-004 use other severity scales
+C02,conflict,How long do we keep expense records?,RC-001;FI-001,Employee expense records|5 years,retained for seven years from the date of the expense,yes,CONFLICT: RC-001 v4.0 says 5 years; FI-001 says seven years. Best answer shows both
+C03,conflict,What is the VPN session timeout?,IT-005;SD-003,Session timeout | 8 hours,|Session timeout|12 hours|,yes,CONFLICT: IT-005 says 8 hours; SD-003 says 12 hours
+C04,conflict,What is the minimum password length?,IT-002;IT-001,Minimum length: 14 characters,Minimum password length: 12 characters,yes,CONFLICT: IT-001 says 12; IT-002 says 14 and states 12 is outdated
+C05,collision,How fast must a High severity phishing report be handled?,SE-002,| High | Within 30 minutes |,,yes,Collides with SD-001 P2 (also 30 min)
+N01,absent,How many days of paternity leave do I get?,,,,no,Corpus defers to the employee handbook; no number given
+N02,absent,How much does office parking cost per month?,,,,no,
+N03,absent,What is the guest Wi-Fi password?,,,,no,
+N04,absent,What is the office dress code?,,,,no,
+N05,absent,What is the overtime pay rate?,,,,no,
+M01,misleading,Why are payroll records only kept for 2 years?,RC-001,Payroll records|7 years|End of tax year,,correct_premise,Pass = refuse or cite the real 7 years
+M02,misleading,"Since VPN sessions never time out, how do I stay connected overnight?",IT-005,Session timeout | 8 hours,,correct_premise,Pass = refuse or cite the timeout
+M03,misleading,What is the $1000 daily allowance for individual meals?,FI-001,Meals — individual|$75/day,,correct_premise,Pass = refuse or cite $75/day
+U01,unrelated,Who won the 2022 FIFA World Cup?,,,,no,
+U02,unrelated,Write me a Python function that sorts a list.,,,,no,

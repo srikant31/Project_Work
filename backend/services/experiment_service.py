@@ -15,7 +15,7 @@ import uuid
 
 import numpy as np
 
-from backend.models.experiment_models import ExperimentQuestion, ExperimentRunRequest
+from backend.models.experiment_models import MAX_EXPERIMENT_DOCUMENTS, ExperimentQuestion, ExperimentRunRequest
 from backend.repositories.experiment_repository import ExperimentRepository
 from backend.utils.chunking import CHUNKER_VERSION, chunk_document
 from backend.utils.loaders import load_document
@@ -71,18 +71,45 @@ def evidence_is_covered(source_text, occurrences, hits):
     return False
 
 
-def score_question(question, hits, expected_doc_id, *, source_text=None, occurrences=()):
-    """Gold labels score evidence/source coverage, never a generated answer."""
+def evidence_coverage(source_text, occurrences, hits):
+    """Best share (0..1) of one gold occurrence's non-space characters inside hits."""
+    intervals = sorted((hit["start_char"], hit["end_char"]) for hit in hits)
+    best = 0.0
+    for start, end in occurrences:
+        needed = [index for index in range(start, end) if not source_text[index].isspace()]
+        if needed:
+            covered = sum(any(left <= index < right for left, right in intervals) for index in needed)
+            best = max(best, covered / len(needed))
+    return best
+
+
+def score_question(question, hits, expected_doc_id, *, source_text=None, occurrences=(), top_k=None):
+    """Gold labels score evidence/source coverage, never a generated answer.
+
+    precision_at_k: share of the K retrieved chunks that come from the expected
+    source (document-level relevance label; lenient).
+    strict_precision_at_k: share of the K retrieved chunks from the expected
+    source that also overlap the gold evidence quote (chunk-level label).
+    recall_at_k: share of the gold evidence quote covered by expected-source
+    chunks in the top K (partial credit; evidence_hit is the all-or-nothing form).
+    """
     if not question.answerable:
         return {"source_hit": None, "evidence_hit": None, "reciprocal_rank": None,
+                "precision_at_k": None, "strict_precision_at_k": None, "recall_at_k": None,
                 "diagnostic": "Unsupported diagnostic: nearest passages are not an answer or a refusal test."}
     relevant = [hit for hit in hits if hit["doc_id"] == expected_doc_id]
     first_rank = min((hit["rank"] for hit in relevant), default=None)
+    has_quote = question.evidence_quote is not None
+    denominator = top_k if top_k else len(hits)
     return {
         "source_hit": bool(relevant),
-        "evidence_hit": evidence_is_covered(source_text, occurrences, relevant)
-                        if question.evidence_quote is not None else None,
+        "evidence_hit": evidence_is_covered(source_text, occurrences, relevant) if has_quote else None,
         "reciprocal_rank": 1.0 / first_rank if first_rank else 0.0,
+        "precision_at_k": len(relevant) / denominator if denominator else 0.0,
+        "strict_precision_at_k": (sum(any(hit["start_char"] < end and start < hit["end_char"]
+                                          for start, end in occurrences) for hit in relevant) / denominator
+                                  if denominator else 0.0) if has_quote else None,
+        "recall_at_k": evidence_coverage(source_text, occurrences, relevant) if has_quote else None,
     }
 
 
@@ -96,6 +123,11 @@ def aggregate_metrics(questions):
         "evidence_hit_rate": sum(row["evidence_hit"] for row in evidence_rows) / len(evidence_rows)
                              if evidence_rows else None,
         "mean_reciprocal_rank": sum(row["reciprocal_rank"] for row in answerable) / len(answerable),
+        "precision_at_k": sum(row.get("precision_at_k") or 0.0 for row in answerable) / len(answerable),
+        "strict_precision_at_k": sum(row["strict_precision_at_k"] for row in evidence_rows) / len(evidence_rows)
+                                 if evidence_rows and all(row.get("strict_precision_at_k") is not None for row in evidence_rows) else None,
+        "recall_at_k": sum(row["recall_at_k"] for row in evidence_rows) / len(evidence_rows)
+                       if evidence_rows and all(row.get("recall_at_k") is not None for row in evidence_rows) else None,
         "mean_latency_ms": sum(row["latency_ms"] for row in answerable) / len(answerable),
     }
 
@@ -162,7 +194,7 @@ class ExperimentService:
                  "expected_doc_id": None, "expected_source_key": None,
                  "evidence_quote": None, "answerable": False},
             ],
-            "limits": {"documents": 10, "questions": 100, "configurations": 12,
+            "limits": {"documents": MAX_EXPERIMENT_DOCUMENTS, "questions": 100, "configurations": 12,
                        "source_characters": MAX_SOURCE_CHARACTERS, "chunks": MAX_CHUNKS},
         }
 
@@ -279,7 +311,8 @@ class ExperimentService:
                                       configuration.top_k, configuration.retrieval_mode)
                 query_latency_ms = (perf_counter() - started) * 1000 + (embedding_ms if configuration.retrieval_mode != "bm25" else 0)
                 score = score_question(label["question"], hits, label["expected_doc_id"],
-                                       source_text=label["source_text"], occurrences=label["occurrences"])
+                                       source_text=label["source_text"], occurrences=label["occurrences"],
+                                       top_k=configuration.top_k)
                 question = label["question"]
                 expected = next((item["snapshot"] for item in corpus if item["snapshot"]["doc_id"] == label["expected_doc_id"]), None)
                 evaluated.append({
@@ -305,6 +338,9 @@ class ExperimentService:
                 "retrieval_backend": "Production BM25 and RRF (constant 60, candidate pool max(20, 4*K)); dense candidates use exact in-memory cosine instead of Chroma. IDs and tie order may differ.",
                 "source_hit_rate": "Expected source found within the selected top K; denominator is answerable questions.",
                 "evidence_hit_rate": "A full authored quote is covered by expected-source top-K offsets; denominator is answerable questions with a quote.",
+                "precision_at_k": "Share of the top-K chunks that come from the expected source, averaged over answerable questions (denominator K).",
+                "strict_precision_at_k": "Share of the top-K chunks that come from the expected source AND overlap the gold evidence quote (chunk-level relevance label), averaged over questions with a quote.",
+                "recall_at_k": "Share of the gold evidence quote's characters covered by expected-source top-K chunks, averaged over questions with a quote. Evidence hit rate is the all-or-nothing version.",
                 "mean_reciprocal_rank": "Inverse rank of the first expected-source hit, averaged over answerable questions.",
                 "mean_latency_ms": "Ranking plus query embedding for vector/hybrid; BM25 excludes embedding time. Averaged over answerable questions. Database/network, LLM and grading time are excluded; index building is reported separately.",
             },
