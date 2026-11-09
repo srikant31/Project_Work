@@ -7,6 +7,7 @@ simulator is selected by production configuration.
 import json
 import math
 import os
+import re
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
@@ -28,6 +29,23 @@ class LLMRateLimitError(LLMProviderError):
 
 class LLMResponseError(RuntimeError):
     pass
+
+
+def _provider_error_detail(response, api_key):
+    # Bound diagnostics just like successful responses. Redact before truncating
+    # so a credential cannot leak as a partial token at the character boundary.
+    pieces, size = [], 0
+    for piece in response.iter_bytes():
+        pieces.append(piece[:max(0, 256 * 1024 - size)])
+        size += len(piece)
+        if size >= 256 * 1024:
+            break
+    text = b"".join(pieces).decode("utf-8", errors="replace")
+    if api_key:
+        text = text.replace(api_key, "[REDACTED]")
+    text = re.sub(r"(?i)(?:gsk_|sk-)[A-Za-z0-9_-]+", "[REDACTED]", text)
+    text = re.sub(r"(?i)Bearer\s+[^\s\"',}]+", "Bearer [REDACTED]", text)
+    return text[:200]
 
 
 class LLMProvider(Protocol):
@@ -88,10 +106,11 @@ class ChatCompletionsLLM:
         try:
             with httpx.Client(timeout=self.timeout, follow_redirects=False, transport=self.transport, trust_env=False) as client:
                 with client.stream("POST", self.endpoint, json=payload, headers=headers) as response:
-                    if response.status_code == 429:
-                        raise LLMRateLimitError('The model free-tier limit was reached. Wait before sending again; your previous chat is saved. Check provider usage if the daily allowance is exhausted.')
                     if response.status_code != 200:
-                        raise LLMProviderError(f"The LLM provider returned HTTP {response.status_code}. Check its local configuration.")
+                        detail = _provider_error_detail(response, self._api_key)
+                        if response.status_code == 429:
+                            raise LLMRateLimitError('The model free-tier limit was reached. Wait before sending again; your previous chat is saved. Check provider usage if the daily allowance is exhausted. Provider detail: ' + detail)
+                        raise LLMProviderError(f"The LLM provider returned HTTP {response.status_code}. Check its local configuration. Provider detail: {detail}")
                     pieces, size = [], 0
                     for piece in response.iter_bytes():
                         size += len(piece)

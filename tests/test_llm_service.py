@@ -56,7 +56,7 @@ def test_rate_limit_message_is_actionable_without_exposing_provider_payload():
     from backend.services.llm_service import LLMRateLimitError
     with pytest.raises(LLMRateLimitError, match='free-tier limit') as caught:
         generate(provider(lambda request: httpx.Response(429,text='private diagnostic payload')))
-    assert 'private diagnostic' not in str(caught.value)
+    assert 'private diagnostic payload' in str(caught.value)
 
 
 def provider(handler, **kwargs):
@@ -173,10 +173,21 @@ def test_malformed_responses_are_explicit_errors(envelope):
         generate(provider(lambda request: httpx.Response(200, json=envelope)))
 
 
-def test_provider_error_body_is_not_exposed():
+def test_provider_error_body_is_included():
     with pytest.raises(LLMProviderError) as error:
         generate(provider(lambda request: httpx.Response(401, text="private-key-and-provider-diagnostics")))
-    assert "401" in str(error.value) and "private-key" not in str(error.value)
+    assert "401" in str(error.value) and "private-key-and-provider-diagnostics" in str(error.value)
+
+
+@pytest.mark.parametrize("status", [400, 404, 429])
+def test_provider_error_details_redact_keys_before_truncating(status):
+    body = "Unknown model. gsk_exampleCredential Bearer otherCredential sk-exampleSecret configured-secret " + "x" * 250
+    with pytest.raises(LLMProviderError) as caught:
+        generate(provider(lambda request: httpx.Response(status, text=body), api_key="configured-secret"))
+    message = str(caught.value)
+    assert "Unknown model." in message and "[REDACTED]" in message
+    assert all(secret not in message for secret in ["gsk_exampleCredential", "otherCredential", "sk-exampleSecret", "configured-secret"])
+    assert len(message.split("Provider detail: ", 1)[1]) == 200
 
 
 def test_oversized_provider_response_is_rejected():
