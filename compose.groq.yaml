@@ -1,0 +1,17 @@
+# Optional hosted generation. The private key is mounted, never baked in.
+services:
+  app:
+    environment:
+      LLM_PROVIDER: chat_completions
+      LLM_ENDPOINT: https://api.groq.com/openai/v1/chat/completions
+      LLM_MODEL: openai/gpt-oss-120b
+      LLM_API_KEY_FILE: /run/secrets/groq_api_key
+      LLM_RESPONSE_FORMAT: json_object
+      LLM_TOKEN_LIMIT_FIELD: max_completion_tokens
+      LLM_TIMEOUT_SECONDS: "60"
+    secrets:
+      - groq_api_key
+
+secrets:
+  groq_api_key:
+    file: ${DOCKER_GROQ_KEY_FILE:?Set DOCKER_GROQ_KEY_FILE in docker/.env to an existing private key file}

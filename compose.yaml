@@ -1,0 +1,65 @@
+name: helpdesk-docker
+
+services:
+  db:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: helpdesk
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DOCKER_DB_ADMIN_PASSWORD:?Run docker/setup.ps1 first}
+      HELPDESK_APP_PASSWORD: ${DOCKER_DB_APP_PASSWORD:?Run docker/setup.ps1 first}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/10-helpdesk.sql:ro
+      - ./backend/database/main_schema.sql:/opt/helpdesk/main_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: helpdesk
+      DB_USER: helpdesk_app
+      DB_PASSWORD: ${DOCKER_DB_APP_PASSWORD:?Run docker/setup.ps1 first}
+      LLM_PROVIDER: disabled
+      AUTH_COOKIE_SECURE: "false"
+      FRONTEND_ORIGINS: http://localhost:${DOCKER_HTTP_PORT:-8080},http://127.0.0.1:${DOCKER_HTTP_PORT:-8080}
+      RETRIEVAL_MODE: hybrid
+      RAG_PROMPT_VARIANT: strict_copy
+      RAG_ANSWER_STYLE: sentence
+      RAG_QUOTE_MATCH: tolerant
+      RAG_MAX_CONTEXT_BYTES: "12000"
+      RAG_MAX_OUTPUT_TOKENS: "1024"
+      PDF_TEXT_EXTRACTOR: pymupdf4llm
+      DOCLING_PDF_MODE: "off"
+    ports:
+      - "127.0.0.1:${DOCKER_HTTP_PORT:-8080}:8000"
+    volumes:
+      - uploads:/app/backend/data/uploads
+      - vectors:/app/chroma_db
+      - app_output:/app/output
+      - type: bind
+        source: ./data/documents/ABC-CORP-helpdesk-corpus
+        target: /app/data/documents/ABC-CORP-helpdesk-corpus
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads:
+  vectors:
+  app_output:

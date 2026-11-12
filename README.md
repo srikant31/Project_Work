@@ -32,6 +32,13 @@ The all-MiniLM-L6-v2 embedding model must be cached locally. Initial download is
 
 Open http://127.0.0.1:8006/ in a browser. API documentation: http://127.0.0.1:8006/docs. FastAPI serves frontend/dist and /api. For frontend development use backend port8000 and npm --prefix frontend run dev, then open http://127.0.0.1:5173/. Use the same host consistently for cookies.
 
+## Docker deployment
+
+For a separate container-based installation, see the [Docker setup guide](docker/README.md).
+It includes a frontend/backend image, PostgreSQL, persistent storage and optional
+Groq generation through a mounted private key file. Docker uses port 8080 and
+its own stores; existing local data and the root `.env` are not migrated or modified.
+
 ## Add new knowledge
 
 Admin uploads accept PDF, DOCX, TXT and Markdown up to20MiB. Processing extracts text, chunks, generates embeddings, verifies vectors and publishes the document. Source files must be processed before retrieval. Default chunk/overlap:200/40model tokens. Offline documents are retained but excluded from fresh retrieval.

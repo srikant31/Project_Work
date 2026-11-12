@@ -1,0 +1,21 @@
+# Allow only the source needed by the build. Local data and keys stay outside.
+**
+!Dockerfile
+!requirements_utf8.txt
+!backend/
+!backend/**
+!scripts/
+!scripts/**
+!frontend/
+!frontend/**
+backend/data/**
+frontend/node_modules/**
+frontend/dist/**
+**/__pycache__/**
+**/*.pyc
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*credentials*.json
+**/*.log

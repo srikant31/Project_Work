@@ -30,3 +30,8 @@ frontend/dist/
 
 # Local README working draft; exclude from normal Git staging.
 /README draft.md
+
+# Private configuration for the independent Docker installation.
+/docker/.env
+/docker/.env.*
+!/docker/.env.example
